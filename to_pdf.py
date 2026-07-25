@@ -6,7 +6,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
 
-def create_crossword_pdf(ipuz_file, pdf_file):
+def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
     try:
         with open(ipuz_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -51,7 +51,13 @@ def create_crossword_pdf(ipuz_file, pdf_file):
     cell_size = grid_width_points / cols
     grid_height_points = cell_size * rows
 
-    start_x_grid = page_width - 30 - grid_width_points
+    right_area_x = page_width - 30 - grid_width_points
+
+    if orientation == "left":
+        start_x_grid = 30
+    else:
+        start_x_grid = right_area_x
+
     start_y_grid = content_start_y - grid_height_points
 
     c.setLineWidth(1)
@@ -83,12 +89,20 @@ def create_crossword_pdf(ipuz_file, pdf_file):
     down_clues = data.get("clues", {}).get("Down", [])
 
     def draw_all_clues(across, down):
-        columns = [
-            {"x": 30, "y": content_start_y},
-            {"x": 165, "y": content_start_y},
-            {"x": start_x_grid, "y": start_y_grid - 20},
-            {"x": start_x_grid + 135, "y": start_y_grid - 20},
-        ]
+        if orientation == "left":
+            columns = [
+                {"x": 30, "y": start_y_grid - 20},
+                {"x": 165, "y": start_y_grid - 20},
+                {"x": right_area_x, "y": content_start_y},
+                {"x": right_area_x + 135, "y": content_start_y},
+            ]
+        else:
+            columns = [
+                {"x": 30, "y": content_start_y},
+                {"x": 165, "y": content_start_y},
+                {"x": right_area_x, "y": start_y_grid - 20},
+                {"x": right_area_x + 135, "y": start_y_grid - 20},
+            ]
 
         col_idx = 0
         current_x = columns[col_idx]["x"]
