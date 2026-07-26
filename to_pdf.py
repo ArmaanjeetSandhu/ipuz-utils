@@ -1,3 +1,4 @@
+import argparse
 import json
 import html
 import textwrap
@@ -7,6 +8,28 @@ from reportlab.pdfgen import canvas
 
 
 def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
+    """Render an ipuz crossword puzzle as a formatted PDF.
+
+    Reads a crossword puzzle in ipuz JSON format, draws the title, author,
+    and copyright line, then lays out the puzzle grid alongside the Across
+    and Down clue lists, wrapping clues into columns and spilling onto
+    additional pages as needed.
+
+    Args:
+        ipuz_file (str): Path to the input .ipuz JSON file.
+        pdf_file (str): Path where the generated PDF will be saved.
+        orientation (str, optional): Layout orientation for the grid.
+            Use "left" to place the grid on the left side of the page
+            with clues to its right, or "right" (the default) to place
+            the grid on the right side of the page with clues to its left.
+
+    Returns:
+        None
+
+    Raises:
+        SystemExit: If `ipuz_file` cannot be found; the program prints an
+            error message and exits with status code 1.
+    """
     try:
         with open(ipuz_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -80,15 +103,30 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
                 c.setFillColorRGB(0, 0, 0)
 
                 if isinstance(cell_val, int):
-                    c.setFont("Helvetica", max(5, int(cell_size / 3.5)))
-                    c.drawString(
-                        x + 2, y + cell_size - max(7, int(cell_size / 3)), str(cell_val)
-                    )
+                    font_size = max(5, int(cell_size / 4.5))
+                    c.setFont("Helvetica", font_size)
+                    c.drawString(x + 1.5, y + cell_size - font_size, str(cell_val))
 
     across_clues = data.get("clues", {}).get("Across", [])
     down_clues = data.get("clues", {}).get("Down", [])
 
     def draw_all_clues(across, down):
+        """Lay out and draw the Across and Down clue lists on the canvas.
+
+        Arranges clues into a fixed set of columns whose positions depend
+        on the chosen grid orientation, drawing "Across" and "Down"
+        section headers followed by their respective clue lists. Delegates
+        to nested helpers to handle column/page wrapping and text drawing.
+
+        Args:
+            across (list[dict]): Across clue entries, each expected to have
+                "number" and "clue" keys.
+            down (list[dict]): Down clue entries, each expected to have
+                "number" and "clue" keys.
+
+        Returns:
+            None
+        """
         if orientation == "left":
             columns = [
                 {"x": 30, "y": start_y_grid - 20},
@@ -113,6 +151,20 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
         max_width_chars = 28
 
         def check_page_wrap(needed_space=0):
+            """Advance to the next clue column or a new page if space is short.
+
+            Checks whether the remaining vertical space in the current
+            column can fit `needed_space` points of content. If not,
+            advances to the next predefined column; if no columns remain,
+            starts a new PDF page with a fresh set of four columns.
+
+            Args:
+                needed_space (int, optional): Vertical space in points
+                    required for the upcoming content. Defaults to 0.
+
+            Returns:
+                None
+            """
             nonlocal current_x, current_y_clue, col_idx, columns
             if (current_y_clue - needed_space) < 50:
                 col_idx += 1
@@ -132,6 +184,14 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
                     current_y_clue = columns[col_idx]["y"]
 
         def draw_header(text):
+            """Draw a bold section header with an underline below it.
+
+            Args:
+                text (str): Header text to draw (e.g. "Across" or "Down").
+
+            Returns:
+                None
+            """
             nonlocal current_y_clue
             check_page_wrap(line_height * 3)
             c.setFont("Times-Bold", 12)
@@ -149,6 +209,19 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
             current_y_clue -= line_height + clue_spacing
 
         def draw_clue_list(clues):
+            """Draw a numbered, word-wrapped list of clues.
+
+            Each clue is prefixed with its number in bold, word-wrapped to
+            fit the column width, and drawn line by line, wrapping to a new
+            column or page as needed.
+
+            Args:
+                clues (list[dict]): Clue entries, each expected to have
+                    "number" and "clue" keys.
+
+            Returns:
+                None
+            """
             nonlocal current_y_clue
             for clue in clues:
                 num = str(clue.get("number", ""))
@@ -194,3 +267,22 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
 
     c.save()
     print(f"Successfully created {pdf_file}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Convert an ipuz crossword puzzle file into a formatted PDF."
+    )
+    parser.add_argument("ipuz_file", help="Path to the input .ipuz JSON file.")
+    parser.add_argument("pdf_file", help="Path where the generated PDF will be saved.")
+    parser.add_argument(
+        "orientation",
+        nargs="?",
+        default="right",
+        choices=["left", "right"],
+        help='Grid orientation: "left" or "right" (default: "right").',
+    )
+
+    args = parser.parse_args()
+
+    create_crossword_pdf(args.ipuz_file, args.pdf_file, args.orientation)
