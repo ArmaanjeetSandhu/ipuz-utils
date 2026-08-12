@@ -2,6 +2,8 @@ import argparse
 import json
 import sys
 
+from shared import make_is_playable
+
 
 def find_unchecked_squares(ipuz_file):
     """Finds "unchecked" squares in an ipuz crossword grid.
@@ -35,35 +37,12 @@ def find_unchecked_squares(ipuz_file):
         print("Error: No puzzle grid found in the file.")
         sys.exit(1)
 
-    rows = len(puzzle)
-    cols = max(len(row) for row in puzzle) if rows > 0 else 0
-
-    def is_playable(r, c):
-        """Determines whether a grid cell is a playable (white) square.
-
-        Args:
-            r: Zero-indexed row coordinate.
-            c: Zero-indexed column coordinate.
-
-        Returns:
-            True if the coordinate is within the grid bounds and the
-            cell is neither None nor a black square ("#"); False
-            otherwise.
-        """
-        if r < 0 or r >= rows or c < 0 or c >= cols:
-            return False
-
-        try:
-            cell = puzzle[r][c]
-        except IndexError:
-            return False
-
-        if cell is None or cell == "#":
-            return False
-
-        return True
+    is_playable = make_is_playable(puzzle)
 
     unchecked_squares = []
+
+    rows = len(puzzle)
+    cols = max(len(row) for row in puzzle) if rows > 0 else 0
 
     for r in range(rows):
         for c in range(cols):
