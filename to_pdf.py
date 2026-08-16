@@ -206,7 +206,7 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
                 current_y_clue - 1.5,
             )
 
-            current_y_clue -= line_height + clue_spacing
+            current_y_clue -= (line_height + clue_spacing + 2.5)
 
         def draw_clue_list(clues):
             """Draw a numbered, word-wrapped list of clues.
