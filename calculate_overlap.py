@@ -1,84 +1,22 @@
 import argparse
-import json
 import sys
 
-from shared import make_is_playable
+from shared import grid_dimensions, letter_at, load_ipuz, make_is_playable
 
 
-def load_grids(ipuz_file):
-    """Loads the puzzle and solution grids from an ipuz file.
-
-    Args:
-        ipuz_file: Path to the .ipuz file to read.
-
-    Returns:
-        A tuple ``(puzzle, solution)`` containing the 2-D puzzle grid
-        and the 2-D solution grid.
-
-    Raises:
-        SystemExit: If the file cannot be found, cannot be parsed, or
-            lacks a puzzle or solution grid.
-    """
-    try:
-        with open(ipuz_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: Could not find the file '{ipuz_file}'")
-        sys.exit(1)
-    except json.JSONDecodeError as exc:
-        print(f"Error: '{ipuz_file}' is not valid JSON ({exc}).")
-        sys.exit(1)
-
-    puzzle = data.get("puzzle", [])
-    if not puzzle:
-        print(f"Error: No puzzle grid found in '{ipuz_file}'.")
-        sys.exit(1)
-
-    solution = data.get("solution", [])
-    if not solution:
-        print(f"Error: No solution grid found in '{ipuz_file}'.")
-        sys.exit(1)
-
-    return puzzle, solution
-
-
-def letter_at(solution, r, c):
-    """Retrieves the uppercase solution letter at a grid cell.
-
-    Args:
-        solution: A 2-D list representing the solution grid.
-        r: Zero-indexed row coordinate.
-        c: Zero-indexed column coordinate.
-
-    Returns:
-        The uppercase letter occupying the cell, or an empty string if
-        the cell is missing or empty.
-    """
-    try:
-        cell = solution[r][c]
-    except IndexError:
-        return ""
-
-    if cell is None or cell == "#":
-        return ""
-
-    if isinstance(cell, dict):
-        cell = cell.get("value", "")
-
-    return str(cell).upper()
-
-
-def calculate_overlap(ipuz_file_a, ipuz_file_b):
+def calculate_overlap(puzzle_a, solution_a, puzzle_b, solution_b):
     """Calculates how many white squares hold the same letter in two grids.
 
-    Reads two .ipuz files that are alternate fills of one another (i.e.,
-    they share an identical layout of black and white squares) and
-    compares the solution letter in every white square, reporting how
+    Compares two crosswords that are alternate fills of one another
+    (i.e., they share an identical layout of black and white squares)
+    by checking the solution letter in every white square, reporting how
     much of the fill the two puzzles have in common.
 
     Args:
-        ipuz_file_a: Path to the first .ipuz file to read.
-        ipuz_file_b: Path to the second .ipuz file to read.
+        puzzle_a: The crossword grid of the first puzzle.
+        solution_a: The solution grid of the first puzzle.
+        puzzle_b: The crossword grid of the second puzzle.
+        solution_b: The solution grid of the second puzzle.
 
     Returns:
         A tuple ``(matching, total_white, percentage, differences)``
@@ -90,18 +28,13 @@ def calculate_overlap(ipuz_file_a, ipuz_file_b):
         1-indexed coordinates, for the squares that differ.
 
     Raises:
-        SystemExit: If either file cannot be read, if the two grids have
-            different dimensions or different black square placements
-            (in which case they are not alternate fills of each other),
-            or if the shared grid has no white squares.
+        SystemExit: If the two grids have different dimensions or
+            different black square placements (in which case they are
+            not alternate fills of each other), or if the shared grid
+            has no white squares.
     """
-    puzzle_a, solution_a = load_grids(ipuz_file_a)
-    puzzle_b, solution_b = load_grids(ipuz_file_b)
-
-    rows_a = len(puzzle_a)
-    cols_a = max(len(row) for row in puzzle_a) if rows_a > 0 else 0
-    rows_b = len(puzzle_b)
-    cols_b = max(len(row) for row in puzzle_b) if rows_b > 0 else 0
+    rows_a, cols_a = grid_dimensions(puzzle_a)
+    rows_b, cols_b = grid_dimensions(puzzle_b)
 
     if (rows_a, cols_a) != (rows_b, cols_b):
         print(
@@ -114,11 +47,12 @@ def calculate_overlap(ipuz_file_a, ipuz_file_b):
     is_playable_a = make_is_playable(puzzle_a)
     is_playable_b = make_is_playable(puzzle_b)
 
-    layout_mismatches = []
-    for r in range(rows_a):
-        for c in range(cols_a):
-            if is_playable_a(r, c) != is_playable_b(r, c):
-                layout_mismatches.append((r + 1, c + 1))
+    layout_mismatches = [
+        (r + 1, c + 1)
+        for r in range(rows_a)
+        for c in range(cols_a)
+        if is_playable_a(r, c) != is_playable_b(r, c)
+    ]
 
     if layout_mismatches:
         print(
@@ -173,8 +107,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    required = ("puzzle", "solution")
+    data_a = load_ipuz(args.ipuz_file_a, require=required)
+    data_b = load_ipuz(args.ipuz_file_b, require=required)
+
     same_count, white_count, percent, diffs = calculate_overlap(
-        args.ipuz_file_a, args.ipuz_file_b
+        data_a["puzzle"], data_a["solution"], data_b["puzzle"], data_b["solution"]
     )
 
     print(f"White squares:  {white_count}")

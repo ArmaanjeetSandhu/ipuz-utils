@@ -1,19 +1,19 @@
-import argparse
-import json
 import sys
+from collections import deque
+
+from shared import grid_dimensions, load_ipuz, make_is_playable, single_file_parser
 
 
-def check_all_over_interlock(ipuz_file):
-    """Checks whether all white squares in an ipuz grid form one connected region.
+def check_all_over_interlock(puzzle):
+    """Checks whether all white squares in a grid form one connected region.
 
-    Reads an .ipuz file and performs a breadth-first search over the
-    white (playable) squares, treating orthogonally adjacent white
-    squares as connected, to determine whether the grid exhibits
-    "all-over interlock" (i.e., every white square can be reached from
-    every other white square).
+    Performs a breadth-first search over the white (playable) squares,
+    treating orthogonally adjacent white squares as connected, to
+    determine whether the grid exhibits "all-over interlock" (i.e.,
+    every white square can be reached from every other white square).
 
     Args:
-        ipuz_file: Path to the .ipuz file to read.
+        puzzle: A 2-D list representing the crossword grid.
 
     Returns:
         A tuple ``(components, total_white)`` where ``components`` is the
@@ -22,33 +22,14 @@ def check_all_over_interlock(ipuz_file):
         white squares in the grid.
 
     Raises:
-        SystemExit: If the file cannot be found, contains no puzzle grid,
-            or has no playable white squares.
+        SystemExit: If the grid has no playable white squares.
     """
-    try:
-        with open(ipuz_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: Could not find the file '{ipuz_file}'")
-        sys.exit(1)
+    is_playable = make_is_playable(puzzle)
+    rows, cols = grid_dimensions(puzzle)
 
-    puzzle = data.get("puzzle", [])
-    if not puzzle:
-        print("Error: No puzzle grid found in the file.")
-        sys.exit(1)
-
-    rows = len(puzzle)
-    cols = max(len(row) for row in puzzle) if rows > 0 else 0
-
-    white_squares = set()
-    for r in range(rows):
-        for c in range(cols):
-            try:
-                cell = puzzle[r][c]
-                if cell != "#" and cell is not None:
-                    white_squares.add((r, c))
-            except IndexError:
-                pass
+    white_squares = {
+        (r, c) for r in range(rows) for c in range(cols) if is_playable(r, c)
+    }
 
     if not white_squares:
         print("Error: The grid has no playable white squares.")
@@ -59,13 +40,12 @@ def check_all_over_interlock(ipuz_file):
 
     while unvisited:
         components += 1
-        start_node = unvisited.pop()
-        queue = [start_node]
+        queue = deque([unvisited.pop()])
 
         while queue:
-            curr_r, curr_c = queue.pop(0)
+            curr_r, curr_c = queue.popleft()
 
-            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 neighbor = (curr_r + dr, curr_c + dc)
 
                 if neighbor in unvisited:
@@ -76,14 +56,14 @@ def check_all_over_interlock(ipuz_file):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Check whether all white squares in an ipuz crossword grid form one connected region."
+    parser = single_file_parser(
+        "Check whether all white squares in an ipuz crossword grid form one connected region."
     )
-    parser.add_argument("ipuz_file", help="Path to the .ipuz file to read.")
-
     args = parser.parse_args()
 
-    component_count, total_white = check_all_over_interlock(args.ipuz_file)
+    data = load_ipuz(args.ipuz_file, require=("puzzle",))
+
+    component_count, total_white = check_all_over_interlock(data["puzzle"])
 
     if component_count == 1:
         print("✓ The puzzle has perfect all-over interlock!")

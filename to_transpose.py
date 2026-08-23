@@ -3,9 +3,16 @@ import copy
 import json
 import os
 import re
-import sys
 
-from shared import make_is_playable
+from shared import (
+    clue_number,
+    clue_text,
+    extract_entries,
+    grid_dimensions,
+    load_ipuz,
+    make_is_playable,
+    rebuild_clue,
+)
 
 _SEPARATOR = r"(?:\s*,\s*(?:(?:and|or|&)\s+)?|\s+(?:and|or|&)\s+)"
 
@@ -20,51 +27,6 @@ REFERENCE_RUN = re.compile(
 
 
 OPPOSITE = {"Across": "Down", "Down": "Across"}
-
-
-def load_ipuz(ipuz_file):
-    """Loads and parses an ipuz file.
-
-    Args:
-        ipuz_file: Path to the .ipuz file to read.
-
-    Returns:
-        The parsed puzzle data as a dictionary.
-
-    Raises:
-        SystemExit: If the file cannot be found, cannot be parsed, or
-            contains no puzzle grid.
-    """
-    try:
-        with open(ipuz_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: Could not find the file '{ipuz_file}'")
-        sys.exit(1)
-    except json.JSONDecodeError as exc:
-        print(f"Error: '{ipuz_file}' is not valid JSON ({exc}).")
-        sys.exit(1)
-
-    if not data.get("puzzle"):
-        print("Error: No puzzle grid found in the file.")
-        sys.exit(1)
-
-    return data
-
-
-def grid_dimensions(grid):
-    """Returns the ``(rows, cols)`` dimensions of a 2-D grid.
-
-    Args:
-        grid: A 2-D list, whose rows may be ragged.
-
-    Returns:
-        A tuple ``(rows, cols)`` where ``cols`` is the width of the
-        widest row.
-    """
-    rows = len(grid)
-    cols = max(len(row) for row in grid) if rows > 0 else 0
-    return rows, cols
 
 
 def transpose_grid(grid, rows, cols):
@@ -93,58 +55,6 @@ def transpose_grid(grid, rows, cols):
     return transposed
 
 
-def clue_number(clue):
-    """Extracts the entry number from an ipuz clue in any common format.
-
-    Args:
-        clue: A clue in ipuz form: a ``[number, text]`` pair, a mapping
-            with a ``"number"`` key, or a bare string.
-
-    Returns:
-        The clue number as a string, or None if no number is present.
-    """
-    if isinstance(clue, dict):
-        number = clue.get("number")
-        return None if number is None else str(number)
-    if isinstance(clue, (list, tuple)) and len(clue) >= 1:
-        return str(clue[0])
-    return None
-
-
-def clue_text(clue):
-    """Extracts the clue text from an ipuz clue in any common format.
-
-    Args:
-        clue: A clue in ipuz form: a ``[number, text]`` pair, a mapping
-            with a ``"clue"`` key, or a bare string.
-
-    Returns:
-        The clue text as a string.
-    """
-    if isinstance(clue, dict):
-        return clue.get("clue", "")
-    if isinstance(clue, (list, tuple)) and len(clue) >= 2:
-        return clue[1]
-    return str(clue)
-
-
-def rebuild_clue(template, number, text):
-    """Rebuilds a clue in the same format as a template clue.
-
-    Args:
-        template: An existing clue whose format should be matched, or
-            None to default to the mapping format.
-        number: The entry number for the rebuilt clue.
-        text: The clue text for the rebuilt clue.
-
-    Returns:
-        A clue in the same shape as ``template``.
-    """
-    if isinstance(template, (list, tuple)):
-        return [number, text]
-    return {"number": number, "clue": text}
-
-
 def match_case(word, model):
     """Renders a word using the capitalisation style of a model string.
 
@@ -161,58 +71,6 @@ def match_case(word, model):
     if model.islower():
         return word.lower()
     return word
-
-
-def extract_entries(puzzle):
-    """Finds every Across and Down entry in a puzzle grid.
-
-    Walks the grid in reading order applying standard crossword
-    numbering, and records the cells belonging to each entry.
-
-    Args:
-        puzzle: A 2-D list representing the crossword grid.
-
-    Returns:
-        A list of dictionaries, each with keys ``"direction"``,
-        ``"number"``, and ``"cells"``, where ``"cells"`` is the ordered
-        list of ``(row, col)`` coordinates the entry occupies.
-    """
-    is_playable = make_is_playable(puzzle)
-    rows, cols = grid_dimensions(puzzle)
-
-    entries = []
-    number = 0
-
-    for r in range(rows):
-        for c in range(cols):
-            if not is_playable(r, c):
-                continue
-
-            starts_across = not is_playable(r, c - 1) and is_playable(r, c + 1)
-            starts_down = not is_playable(r - 1, c) and is_playable(r + 1, c)
-
-            if starts_across or starts_down:
-                number += 1
-
-            if starts_across:
-                cells = []
-                cc = c
-                while is_playable(r, cc):
-                    cells.append((r, cc))
-                    cc += 1
-                entries.append(
-                    {"direction": "Across", "number": number, "cells": cells}
-                )
-
-            if starts_down:
-                cells = []
-                rr = r
-                while is_playable(rr, c):
-                    cells.append((rr, c))
-                    rr += 1
-                entries.append({"direction": "Down", "number": number, "cells": cells})
-
-    return entries
 
 
 def build_renumber_map(original_entries, transposed_entries):
@@ -420,7 +278,7 @@ def to_transpose(ipuz_file, out_file, sort_references=False):
     Raises:
         SystemExit: If the input cannot be read or contains no grid.
     """
-    data = load_ipuz(ipuz_file)
+    data = load_ipuz(ipuz_file, require=("puzzle",))
     rows, cols = grid_dimensions(data["puzzle"])
 
     original_entries = extract_entries(data["puzzle"])

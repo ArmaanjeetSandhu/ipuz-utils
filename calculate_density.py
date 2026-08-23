@@ -1,16 +1,16 @@
-import argparse
-import json
 import sys
 
+from shared import BLOCK, load_ipuz, single_file_parser
 
-def calculate_black_square_percentage(ipuz_file):
+
+def calculate_black_square_percentage(puzzle):
     """Calculates the percentage of black squares in an ipuz puzzle grid.
 
-    Reads an .ipuz file, iterates over every cell in the puzzle grid, and
-    computes what fraction of cells are black squares (represented by "#").
+    Iterates over every cell in the puzzle grid and computes what
+    fraction of cells are black squares (represented by "#").
 
     Args:
-        ipuz_file: Path to the .ipuz file to read.
+        puzzle: A 2-D list representing the crossword grid.
 
     Returns:
         A tuple ``(black_squares, total_squares, percentage)`` where
@@ -20,28 +20,15 @@ def calculate_black_square_percentage(ipuz_file):
         (0-100).
 
     Raises:
-        SystemExit: If the file cannot be found, contains no puzzle grid,
-            or the puzzle grid is empty.
+        SystemExit: If the puzzle grid is empty.
     """
-    try:
-        with open(ipuz_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: Could not find the file '{ipuz_file}'")
-        sys.exit(1)
-
-    puzzle = data.get("puzzle", [])
-    if not puzzle:
-        print("Error: No puzzle grid found in the file.")
-        sys.exit(1)
-
     total_squares = 0
     black_squares = 0
 
     for row in puzzle:
         for cell in row:
             total_squares += 1
-            if cell == "#":
+            if cell == BLOCK:
                 black_squares += 1
 
     if total_squares == 0:
@@ -54,15 +41,15 @@ def calculate_black_square_percentage(ipuz_file):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Calculate the percentage of black squares in an ipuz crossword grid."
+    parser = single_file_parser(
+        "Calculate the percentage of black squares in an ipuz crossword grid."
     )
-    parser.add_argument("ipuz_file", help="Path to the .ipuz file to read.")
-
     args = parser.parse_args()
 
+    data = load_ipuz(args.ipuz_file, require=("puzzle",))
+
     black_count, total_count, percent = calculate_black_square_percentage(
-        args.ipuz_file
+        data["puzzle"]
     )
 
     print(f"Total squares: {total_count}")

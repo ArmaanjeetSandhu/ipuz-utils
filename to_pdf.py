@@ -1,10 +1,11 @@
 import argparse
-import json
 import html
+import os
 import textwrap
-import sys
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+
+from shared import BLOCK, cell_value, clue_number, clue_text, load_ipuz
 
 
 def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution=False):
@@ -28,15 +29,15 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
         None
 
     Raises:
-        SystemExit: If `ipuz_file` cannot be found; the program prints an
-            error message and exits with status code 1.
+        SystemExit: If `ipuz_file` cannot be found or cannot be parsed;
+            the program prints an error message and exits with status
+            code 1.
     """
-    try:
-        with open(ipuz_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: Could not find the file {ipuz_file}")
-        sys.exit(1)
+    data = load_ipuz(ipuz_file, require=("puzzle",))
+
+    directory = os.path.dirname(pdf_file)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
 
     c = canvas.Canvas(pdf_file, pagesize=letter)
     page_width, page_height = letter
@@ -96,7 +97,7 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
             x = start_x_grid + col * cell_size
             y = start_y_grid + (rows - 1 - r) * cell_size
 
-            if cell_val == "#":
+            if cell_val == BLOCK:
                 c.setFillColorRGB(0, 0, 0)
                 c.rect(x, y, cell_size, cell_size, fill=1)
             else:
@@ -110,12 +111,8 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
                     c.drawString(x + 1.5, y + cell_size - font_size, str(cell_val))
 
                 if show_solution and r < len(solution) and col < len(solution[r]):
-                    sol_val = solution[r][col]
-                    if sol_val and sol_val != "#":
-                        if isinstance(sol_val, dict):
-                            sol_val = sol_val.get("value", "")
-
-                        sol_char = str(sol_val)
+                    sol_char = cell_value(solution[r][col])
+                    if sol_char:
                         letter_font_size = max(8, int(cell_size / 1.5))
                         c.setFont("Helvetica-Bold", letter_font_size)
 
@@ -246,8 +243,8 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
             """
             nonlocal current_y_clue
             for clue in clues:
-                num = str(clue.get("number", ""))
-                text = html.unescape(clue.get("clue", ""))
+                num = clue_number(clue) or ""
+                text = html.unescape(str(clue_text(clue)))
 
                 num_prefix = f"{num}. "
                 wrapped_text = textwrap.wrap(
@@ -296,7 +293,11 @@ if __name__ == "__main__":
         description="Convert an ipuz crossword puzzle file into a formatted PDF."
     )
     parser.add_argument("ipuz_file", help="Path to the input .ipuz JSON file.")
-    parser.add_argument("pdf_file", help="Path where the generated PDF will be saved.")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Path where the generated PDF will be saved (default: <name>.pdf, or <name>_solution.pdf in solution mode).",
+    )
     parser.add_argument(
         "orientation",
         nargs="?",
@@ -313,4 +314,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    create_crossword_pdf(args.ipuz_file, args.pdf_file, args.orientation, args.solution)
+    out_file = args.out
+    if out_file is None:
+        stem = os.path.splitext(os.path.basename(args.ipuz_file))[0]
+        suffix = "_solution" if args.solution else ""
+        out_file = f"{stem}{suffix}.pdf"
+
+    create_crossword_pdf(args.ipuz_file, out_file, args.orientation, args.solution)
