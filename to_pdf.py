@@ -7,13 +7,13 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
 
-def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
+def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution=False):
     """Render an ipuz crossword puzzle as a formatted PDF.
 
     Reads a crossword puzzle in ipuz JSON format, draws the title, author,
     and copyright line, then lays out the puzzle grid alongside the Across
     and Down clue lists, wrapping clues into columns and spilling onto
-    additional pages as needed.
+    additional pages as needed. Can optionally fill in the solution.
 
     Args:
         ipuz_file (str): Path to the input .ipuz JSON file.
@@ -22,6 +22,7 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
             Use "left" to place the grid on the left side of the page
             with clues to its right, or "right" (the default) to place
             the grid on the right side of the page with clues to its left.
+        show_solution (bool, optional): Whether to fill the grid with the solution.
 
     Returns:
         None
@@ -48,6 +49,7 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
     cols = dims["width"]
     rows = dims["height"]
     puzzle = data.get("puzzle", [])
+    solution = data.get("solution", [])
 
     current_y = page_height - 40
 
@@ -106,6 +108,26 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
                     font_size = max(5, int(cell_size / 4.5))
                     c.setFont("Helvetica", font_size)
                     c.drawString(x + 1.5, y + cell_size - font_size, str(cell_val))
+
+                if show_solution and r < len(solution) and col < len(solution[r]):
+                    sol_val = solution[r][col]
+                    if sol_val and sol_val != "#":
+                        if isinstance(sol_val, dict):
+                            sol_val = sol_val.get("value", "")
+
+                        sol_char = str(sol_val)
+                        letter_font_size = max(8, int(cell_size / 1.5))
+                        c.setFont("Helvetica-Bold", letter_font_size)
+
+                        letter_width = c.stringWidth(
+                            sol_char, "Helvetica-Bold", letter_font_size
+                        )
+                        lx = x + (cell_size - letter_width) / 2
+                        ly = y + (cell_size - letter_font_size) / 2
+
+                        c.setFillColorRGB(0.3, 0.3, 0.3)
+                        c.drawString(lx, ly, sol_char)
+                        c.setFillColorRGB(0, 0, 0)
 
     across_clues = data.get("clues", {}).get("Across", [])
     down_clues = data.get("clues", {}).get("Down", [])
@@ -206,7 +228,7 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right"):
                 current_y_clue - 1.5,
             )
 
-            current_y_clue -= (line_height + clue_spacing + 2.5)
+            current_y_clue -= line_height + clue_spacing + 2.5
 
         def draw_clue_list(clues):
             """Draw a numbered, word-wrapped list of clues.
@@ -282,7 +304,13 @@ if __name__ == "__main__":
         choices=["left", "right"],
         help='Grid orientation: "left" or "right" (default: "right").',
     )
+    parser.add_argument(
+        "-s",
+        "--solution",
+        action="store_true",
+        help="Generate the PDF in solution mode (grid filled out).",
+    )
 
     args = parser.parse_args()
 
-    create_crossword_pdf(args.ipuz_file, args.pdf_file, args.orientation)
+    create_crossword_pdf(args.ipuz_file, args.pdf_file, args.orientation, args.solution)
