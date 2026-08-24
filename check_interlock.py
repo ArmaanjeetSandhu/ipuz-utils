@@ -73,4 +73,3 @@ if __name__ == "__main__":
     else:
         print("✗ Interlock broken!")
         print(f"The grid is fractured into {component_count} isolated sections.")
-        print("Solvers would not be able to reach every part of the puzzle.")

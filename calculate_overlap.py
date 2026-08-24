@@ -19,13 +19,10 @@ def calculate_overlap(puzzle_a, solution_a, puzzle_b, solution_b):
         solution_b: The solution grid of the second puzzle.
 
     Returns:
-        A tuple ``(matching, total_white, percentage, differences)``
-        where ``matching`` is the number of white squares holding the
-        same letter in both grids, ``total_white`` is the total number
-        of white squares, ``percentage`` is ``matching`` expressed as a
-        float percentage (0-100) of ``total_white``, and ``differences``
-        is a list of ``(row, col, letter_a, letter_b)`` tuples, with
-        1-indexed coordinates, for the squares that differ.
+        A tuple ``(matching, total_white, percentage)`` where ``matching``
+        is the number of white squares holding the same letter in both grids,
+        ``total_white`` is the total number of white squares, and ``percentage``
+        is ``matching`` expressed as a float percentage (0-100) of ``total_white``.
 
     Raises:
         SystemExit: If the two grids have different dimensions or
@@ -60,15 +57,14 @@ def calculate_overlap(puzzle_a, solution_a, puzzle_b, solution_b):
             f"{len(layout_mismatches)} square(s):"
         )
         for r, c in layout_mismatches[:10]:
-            print(f"   - Row {r}, Column {c}")
+            print(f"‣ Row {r}, Column {c}")
         if len(layout_mismatches) > 10:
-            print(f"   ... and {len(layout_mismatches) - 10} more.")
+            print(f"... and {len(layout_mismatches) - 10} more.")
         print("Alternate fills must share an identical layout.")
         sys.exit(1)
 
     total_white = 0
     matching = 0
-    differences = []
 
     for r in range(rows_a):
         for c in range(cols_a):
@@ -81,8 +77,6 @@ def calculate_overlap(puzzle_a, solution_a, puzzle_b, solution_b):
 
             if letter_a == letter_b:
                 matching += 1
-            else:
-                differences.append((r + 1, c + 1, letter_a, letter_b))
 
     if total_white == 0:
         print("Error: The grid has no playable white squares.")
@@ -90,7 +84,7 @@ def calculate_overlap(puzzle_a, solution_a, puzzle_b, solution_b):
 
     percentage = (matching / total_white) * 100
 
-    return matching, total_white, percentage, differences
+    return matching, total_white, percentage
 
 
 if __name__ == "__main__":
@@ -99,11 +93,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("ipuz_file_a", help="Path to the first .ipuz file to read.")
     parser.add_argument("ipuz_file_b", help="Path to the second .ipuz file to read.")
-    parser.add_argument(
-        "--show-differences",
-        action="store_true",
-        help="List every white square whose letter differs between the two grids.",
-    )
 
     args = parser.parse_args()
 
@@ -111,7 +100,7 @@ if __name__ == "__main__":
     data_a = load_ipuz(args.ipuz_file_a, require=required)
     data_b = load_ipuz(args.ipuz_file_b, require=required)
 
-    same_count, white_count, percent, diffs = calculate_overlap(
+    same_count, white_count, percent = calculate_overlap(
         data_a["puzzle"], data_a["solution"], data_b["puzzle"], data_b["solution"]
     )
 
@@ -120,15 +109,5 @@ if __name__ == "__main__":
     print(f"Different:      {white_count - same_count}")
     print(f"Overlap:        {percent:.2f}%")
 
-    if args.show_differences and diffs:
-        print("\nDiffering squares:")
-        for r, c, letter_a, letter_b in diffs:
-            print(f"   - Row {r}, Column {c}: {letter_a} vs {letter_b}")
-
-    print()
     if same_count == white_count:
-        print("✗ The two grids are identical — this is not an alternate fill.")
-    elif same_count == 0:
-        print("✓ Every single white square differs! A fully disjoint alternate fill.")
-    else:
-        print(f"The two fills share {percent:.2f}% of their letters.")
+        print("✗ The two grids are identical.")

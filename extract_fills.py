@@ -2,7 +2,7 @@ from shared import extract_entries, letter_at, load_ipuz, single_file_parser
 
 
 def extract_fills(puzzle, solution):
-    """Extracts the list of fills (answer words) from an ipuz puzzle.
+    """Extracts the list of fills from an ipuz puzzle.
 
     Walks each Across and Down entry, determined by standard crossword
     numbering rules on the ``puzzle`` grid, to reconstruct the actual
@@ -25,7 +25,7 @@ def extract_fills(puzzle, solution):
 
 if __name__ == "__main__":
     parser = single_file_parser(
-        "Extract the alphabetically sorted list of fills (answer words) from an ipuz crossword puzzle."
+        "Extract the alphabetically sorted list of fills from an ipuz crossword puzzle."
     )
     args = parser.parse_args()
 

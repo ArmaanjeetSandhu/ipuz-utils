@@ -158,9 +158,9 @@ def renumber(data, clue_lookup, template, mapping, sort_references=False):
 
     Each entry of the transposed grid is matched back to the original
     entry occupying the same cells (with coordinates swapped), so clues
-    follow their answers. Because the transpose preserves the reading
+    follow their solutions. Because the transpose preserves the reading
     order of every entry, an Across clue simply becomes a Down clue and
-    vice versa, and no answer is reversed. Cross-references inside the
+    vice versa, and no solution is reversed. Cross-references inside the
     clue text are rewritten to match the new numbering.
 
     Args:
