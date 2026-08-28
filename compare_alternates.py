@@ -1,11 +1,17 @@
 import argparse
 import sys
 
-from shared import grid_dimensions, letter_at, load_ipuz, make_is_playable
+from shared import (
+    extract_entries,
+    grid_dimensions,
+    letter_at,
+    load_ipuz,
+    make_is_playable,
+)
 
 
-def calculate_overlap(puzzle_a, solution_a, puzzle_b, solution_b):
-    """Calculates how many white squares hold the same letter in two grids.
+def compare_squares(puzzle_a, solution_a, puzzle_b, solution_b):
+    """Counts how many white squares hold the same letter in two grids.
 
     Compares two crosswords that are alternate fills of one another
     (i.e., they share an identical layout of black and white squares)
@@ -87,12 +93,69 @@ def calculate_overlap(puzzle_a, solution_a, puzzle_b, solution_b):
     return matching, total_white, percentage
 
 
+def entry_word(solution, cells):
+    """Reads the word an entry spells out in a solution grid.
+
+    Args:
+        solution: A 2-D list representing the solution grid.
+        cells: The ordered list of ``(row, col)`` coordinates the entry
+            occupies.
+
+    Returns:
+        The entry's letters joined into a single uppercase string.
+    """
+    return "".join(letter_at(solution, r, c) for r, c in cells)
+
+
+def compare_entries(puzzle, solution_a, solution_b):
+    """Compares the fill of two grids entry by entry.
+
+    Because the two puzzles share an identical layout, the entries of
+    either one describe both, so numbering and cell coordinates are
+    taken from ``puzzle`` and the letters are read from each solution
+    in turn.
+
+    Args:
+        puzzle: The crossword grid shared by both puzzles.
+        solution_a: The solution grid of the first puzzle.
+        solution_b: The solution grid of the second puzzle.
+
+    Returns:
+        A tuple ``(changed, total, unchanged)`` where ``changed`` is the
+        number of entries spelling a different word in the two grids,
+        ``total`` is the number of entries, and ``unchanged`` is a list
+        of ``(direction, number, word)`` tuples for the entries whose
+        word is common to both grids, in grid order.
+    """
+    entries = extract_entries(puzzle)
+
+    changed = 0
+    unchanged = []
+
+    for entry in entries:
+        word_a = entry_word(solution_a, entry["cells"])
+        word_b = entry_word(solution_b, entry["cells"])
+
+        if word_a == word_b:
+            unchanged.append((entry["direction"], entry["number"], word_a))
+        else:
+            changed += 1
+
+    return changed, len(entries), unchanged
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Calculate the percentage of white squares that hold the same letter in two ipuz crosswords that are alternate fills of each other."
+        description="Compare two ipuz crosswords that are alternate fills of each other, "
+        "reporting how much of the fill they share by square and by entry."
     )
     parser.add_argument("ipuz_file_a", help="Path to the first .ipuz file to read.")
     parser.add_argument("ipuz_file_b", help="Path to the second .ipuz file to read.")
+    parser.add_argument(
+        "--show-unchanged",
+        action="store_true",
+        help="List the entries that spell the same word in both puzzles.",
+    )
 
     args = parser.parse_args()
 
@@ -100,14 +163,31 @@ if __name__ == "__main__":
     data_a = load_ipuz(args.ipuz_file_a, require=required)
     data_b = load_ipuz(args.ipuz_file_b, require=required)
 
-    same_count, white_count, percent = calculate_overlap(
+    same_count, white_count, percent = compare_squares(
         data_a["puzzle"], data_a["solution"], data_b["puzzle"], data_b["solution"]
     )
 
-    print(f"White squares:  {white_count}")
-    print(f"Same letter:    {same_count}")
-    print(f"Different:      {white_count - same_count}")
-    print(f"Overlap:        {percent:.2f}%")
+    print(f"Total white squares:  {white_count}")
+    print(f"Unchanged:            {same_count}")
+    print(f"Different:            {white_count - same_count}")
+    print(f"Overlap:              {percent:.2f}%")
 
     if same_count == white_count:
         print("✗ The two grids are identical.")
+
+    changed_count, total_entries, unchanged = compare_entries(
+        data_a["puzzle"], data_a["solution"], data_b["solution"]
+    )
+
+    print()
+    print(f"Total entries:        {total_entries}")
+    print(f"Unchanged:            {total_entries - changed_count}")
+    print(f"Different:            {changed_count}")
+
+    if args.show_unchanged and unchanged:
+        print("\nUnchanged entries:")
+        for direction, number, word in unchanged:
+            print(f"‣ {number}-{direction}: {word}")
+
+    if changed_count == total_entries:
+        print("✓ Every entry is different! A fully disjoint alternate fill.")
