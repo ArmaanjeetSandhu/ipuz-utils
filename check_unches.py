@@ -49,7 +49,7 @@ if __name__ == "__main__":
         print("✓ No unches found!")
     else:
         print(
-            f"Found {len(uncheck_list)} unchecked square(s) at the following coordinates:"
+            f"✗ Found {len(uncheck_list)} unchecked square(s) at the following coordinates:"
         )
         for r, c in uncheck_list:
             print(f"‣ Row {r}, Column {c}")

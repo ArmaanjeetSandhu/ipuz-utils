@@ -41,6 +41,29 @@ def count_fill_lengths(puzzle):
     return Counter(len(entry["cells"]) for entry in extract_entries(puzzle))
 
 
+def find_short_entries(puzzle):
+    """Finds every entry in a puzzle grid shorter than three squares.
+
+    Args:
+        puzzle: A 2-D list representing the crossword grid.
+
+    Returns:
+        A list of ``(direction, row, col)`` tuples in grid reading
+        order, where ``row`` and ``col`` are the zero-indexed
+        coordinates of the entry's first cell.
+    """
+    short_entries = []
+
+    for entry in extract_entries(puzzle):
+        if len(entry["cells"]) >= 3:
+            continue
+
+        row, col = entry["cells"][0]
+        short_entries.append((entry["direction"], row, col))
+
+    return short_entries
+
+
 if __name__ == "__main__":
     parser = single_file_parser(
         "Count the number of Across and Down fills in an ipuz crossword puzzle."
@@ -59,6 +82,15 @@ if __name__ == "__main__":
             ((f"Length {length:2}", count) for length, count in sorted_lengths),
             rule_width=55,
         )
+
+    short_entries = find_short_entries(data["puzzle"])
+
+    if short_entries:
+        plural = "entry" if len(short_entries) == 1 else "entries"
+        print(f"✗ Found {len(short_entries)} {plural} shorter than 3 squares:")
+        for direction, row, col in short_entries:
+            print(f"‣ Row {row + 1}, Column {col + 1} ({direction})")
+        print("-" * 55)
 
     across, down, total = count_clue_fills(data["clues"])
 
