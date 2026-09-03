@@ -5,7 +5,15 @@ import textwrap
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-from shared import BLOCK, cell_value, clue_number, clue_text, load_ipuz
+from shared import (
+    BLOCK,
+    EMPTY,
+    cell_label,
+    cell_value,
+    clue_number,
+    clue_text,
+    load_ipuz,
+)
 
 
 def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution=False):
@@ -51,6 +59,7 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
     rows = dims["height"]
     puzzle = data.get("puzzle", [])
     solution = data.get("solution", [])
+    empty = data.get("empty", EMPTY)
 
     current_y = page_height - 40
 
@@ -105,10 +114,11 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
                 c.rect(x, y, cell_size, cell_size, fill=1)
                 c.setFillColorRGB(0, 0, 0)
 
-                if isinstance(cell_val, int):
+                label = cell_label(cell_val, empty)
+                if label:
                     font_size = max(5, int(cell_size / 4.5))
                     c.setFont("Helvetica", font_size)
-                    c.drawString(x + 1.5, y + cell_size - font_size, str(cell_val))
+                    c.drawString(x + 1.5, y + cell_size - font_size, label)
 
                 if show_solution and r < len(solution) and col < len(solution[r]):
                     sol_char = cell_value(solution[r][col])

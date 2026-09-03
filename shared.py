@@ -5,6 +5,7 @@ import json
 import sys
 
 BLOCK = "#"
+EMPTY = "0"
 
 _MISSING_MESSAGES = {
     "puzzle": "No puzzle grid found",
@@ -179,6 +180,36 @@ def cell_value(cell):
         cell = cell.get("value", "")
 
     if cell is None:
+        return ""
+
+    return str(cell)
+
+
+def cell_label(cell, empty=EMPTY):
+    """Reads the number, if any, that a puzzle grid cell is labelled with.
+
+    An ipuz puzzle cell holds either the value of the file's ``"empty"``
+    key (meaning an unnumbered white square), a block, or the entry
+    number the square starts, given as a number or a string. The cell
+    may also be a mapping carrying that value under a ``"cell"`` key
+    alongside styling information.
+
+    Args:
+        cell: A single cell drawn from an ipuz puzzle grid.
+        empty: The file's ``"empty"`` marker, which labels an unnumbered
+            white square. Defaults to the ipuz default of ``"0"``.
+
+    Returns:
+        The cell's label as a string, or an empty string if the cell is
+        a block or carries no number.
+    """
+    if isinstance(cell, dict):
+        cell = cell.get("cell", empty)
+
+    if cell is None or cell == BLOCK:
+        return ""
+
+    if str(cell) == str(empty):
         return ""
 
     return str(cell)
