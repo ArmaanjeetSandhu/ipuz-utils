@@ -1,7 +1,15 @@
-from shared import grid_dimensions, load_ipuz, make_is_playable, single_file_parser
+from shared import (
+    BARS,
+    BLOCK,
+    grid_dimensions,
+    load_ipuz,
+    make_is_playable,
+    markers,
+    single_file_parser,
+)
 
 
-def find_unchecked_squares(puzzle):
+def find_unchecked_squares(puzzle, block=BLOCK):
     """Finds "unchecked" squares in a crossword grid.
 
     An unchecked square (an "unch") is a playable square that is not
@@ -10,13 +18,15 @@ def find_unchecked_squares(puzzle):
 
     Args:
         puzzle: A 2-D list representing the crossword grid.
+        block: The file's ``"block"`` marker. Defaults to the ipuz
+            default of ``"#"``.
 
     Returns:
         A list of 1-indexed ``(row, col)`` tuples identifying the
         unchecked squares. An empty list means every playable square is
         checked by both an Across and a Down word.
     """
-    is_playable = make_is_playable(puzzle)
+    is_playable = make_is_playable(puzzle, block)
     rows, cols = grid_dimensions(puzzle)
 
     unchecked_squares = []
@@ -41,9 +51,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    data = load_ipuz(args.ipuz_file, require=("puzzle",))
+    data = load_ipuz(args.ipuz_file, require=("puzzle",), reject=(BARS,))
+    block, _ = markers(data)
 
-    uncheck_list = find_unchecked_squares(data["puzzle"])
+    uncheck_list = find_unchecked_squares(data["puzzle"], block)
 
     if not uncheck_list:
         print("✓ No unches found!")

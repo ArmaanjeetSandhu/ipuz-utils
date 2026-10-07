@@ -1,19 +1,31 @@
 import string
 from collections import Counter
 
-from shared import cell_value, load_ipuz, print_bar_chart, single_file_parser
+from shared import (
+    BLOCK,
+    EMPTY,
+    MULTI_VALUES,
+    cell_value,
+    load_ipuz,
+    markers,
+    print_bar_chart,
+    single_file_parser,
+)
 
 
-def count_letter_frequencies(solution):
+def count_letter_frequencies(solution, block=BLOCK, empty=EMPTY):
     """Counts letter frequencies in a puzzle's solution grid.
 
     Tallies how many times each uppercase letter A-Z appears in the
     solution grid. Solution cells may be plain strings or dicts with a
     "value" key; non-alphabetic characters (blocks, empty cells,
-    punctuation) are ignored.
+    punctuation) are ignored. A cell holding several letters (a rebus)
+    contributes each of them.
 
     Args:
         solution: A 2-D list representing the solution grid.
+        block: The file's ``"block"`` marker.
+        empty: The file's ``"empty"`` marker.
 
     Returns:
         A ``collections.Counter`` mapping each uppercase letter found to
@@ -23,9 +35,9 @@ def count_letter_frequencies(solution):
 
     for row in solution:
         for cell in row:
-            char = cell_value(cell).strip().upper()
-            if char.isalpha():
-                letter_counts[char] += 1
+            for char in cell_value(cell, block, empty).upper():
+                if char.isalpha():
+                    letter_counts[char] += 1
 
     return letter_counts
 
@@ -36,9 +48,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    data = load_ipuz(args.ipuz_file, require=("solution",))
+    data = load_ipuz(args.ipuz_file, require=("solution",), reject=(MULTI_VALUES,))
 
-    frequencies = count_letter_frequencies(data["solution"])
+    frequencies = count_letter_frequencies(data["solution"], *markers(data))
 
     if not frequencies:
         print("No letters were found in the solution grid.")

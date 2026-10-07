@@ -1,10 +1,18 @@
 import sys
 from collections import deque
 
-from shared import grid_dimensions, load_ipuz, make_is_playable, single_file_parser
+from shared import (
+    BARS,
+    BLOCK,
+    grid_dimensions,
+    load_ipuz,
+    make_is_playable,
+    markers,
+    single_file_parser,
+)
 
 
-def check_all_over_interlock(puzzle):
+def check_all_over_interlock(puzzle, block=BLOCK):
     """Checks whether all white squares in a grid form one connected region.
 
     Performs a breadth-first search over the white (playable) squares,
@@ -14,6 +22,8 @@ def check_all_over_interlock(puzzle):
 
     Args:
         puzzle: A 2-D list representing the crossword grid.
+        block: The file's ``"block"`` marker. Defaults to the ipuz
+            default of ``"#"``.
 
     Returns:
         A tuple ``(components, total_white)`` where ``components`` is the
@@ -24,7 +34,7 @@ def check_all_over_interlock(puzzle):
     Raises:
         SystemExit: If the grid has no playable white squares.
     """
-    is_playable = make_is_playable(puzzle)
+    is_playable = make_is_playable(puzzle, block)
     rows, cols = grid_dimensions(puzzle)
 
     white_squares = {
@@ -61,9 +71,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    data = load_ipuz(args.ipuz_file, require=("puzzle",))
+    data = load_ipuz(args.ipuz_file, require=("puzzle",), reject=(BARS,))
+    block, _ = markers(data)
 
-    component_count, total_white = check_all_over_interlock(data["puzzle"])
+    component_count, total_white = check_all_over_interlock(data["puzzle"], block)
 
     if component_count == 1:
         print("✓ The puzzle has perfect all-over interlock!")

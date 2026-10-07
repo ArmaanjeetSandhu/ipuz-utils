@@ -1,4 +1,12 @@
-from shared import grid_dimensions, load_ipuz, make_is_playable, single_file_parser
+from shared import (
+    BARS,
+    BLOCK,
+    grid_dimensions,
+    load_ipuz,
+    make_is_playable,
+    markers,
+    single_file_parser,
+)
 
 SQUARE_ONLY = "square-only"
 
@@ -64,7 +72,7 @@ _GROUP_NAMES = {
 }
 
 
-def has_symmetry(puzzle, transform):
+def has_symmetry(puzzle, transform, block=BLOCK):
     """Checks a puzzle grid against a single symmetry transformation.
 
     Compares each cell with the cell it is mapped to by ``transform``,
@@ -76,12 +84,14 @@ def has_symmetry(puzzle, transform):
         transform: A callable ``transform(r, c, rows, cols)`` returning
             the zero-indexed ``(row, col)`` coordinate that the cell at
             zero-indexed ``(r, c)`` is mapped to by the symmetry.
+        block: The file's ``"block"`` marker. Defaults to the ipuz
+            default of ``"#"``.
 
     Returns:
         True if every cell matches its counterpart in block/white
         status, meaning the grid has this symmetry; False otherwise.
     """
-    is_playable = make_is_playable(puzzle)
+    is_playable = make_is_playable(puzzle, block)
     rows, cols = grid_dimensions(puzzle)
 
     for r in range(rows):
@@ -94,7 +104,7 @@ def has_symmetry(puzzle, transform):
     return True
 
 
-def find_symmetries(puzzle):
+def find_symmetries(puzzle, block=BLOCK):
     """Checks a puzzle grid against every symmetry a crossword can have.
 
     Tests the four reflections (vertical, horizontal, diagonal and
@@ -106,6 +116,8 @@ def find_symmetries(puzzle):
 
     Args:
         puzzle: A 2-D list representing the crossword grid.
+        block: The file's ``"block"`` marker. Defaults to the ipuz
+            default of ``"#"``.
 
     Returns:
         A list of dictionaries in the order the symmetries are defined,
@@ -122,7 +134,7 @@ def find_symmetries(puzzle):
         if symmetry["square_only"] and not is_square:
             holds = SQUARE_ONLY
         else:
-            holds = has_symmetry(puzzle, symmetry["transform"])
+            holds = has_symmetry(puzzle, symmetry["transform"], block)
 
         results.append(
             {
@@ -155,9 +167,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    data = load_ipuz(args.ipuz_file, require=("puzzle",))
+    data = load_ipuz(args.ipuz_file, require=("puzzle",), reject=(BARS,))
+    block, _ = markers(data)
 
-    symmetry_results = find_symmetries(data["puzzle"])
+    symmetry_results = find_symmetries(data["puzzle"], block)
 
     width = max(len(s["label"]) for s in SYMMETRIES)
 

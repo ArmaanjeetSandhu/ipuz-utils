@@ -1,18 +1,42 @@
 import argparse
-import html
 import os
 import textwrap
+
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
 from shared import (
-    BLOCK,
-    EMPTY,
+    BARS,
+    CLUE_FIELDS,
+    CLUE_LINKS,
+    FORMATTING,
+    GIVENS,
+    MULTI_VALUES,
+    ORIENTED_STYLES,
+    STYLES,
+    ZONES,
     cell_label,
     cell_value,
-    clue_number,
+    clue_heading,
     clue_text,
+    is_block,
+    is_omitted,
     load_ipuz,
+    markers,
+    plain_text,
+    split_direction,
+)
+
+UNPRINTED_FIELDS = (
+    "intro",
+    "notes",
+    "publisher",
+    "publication",
+    "editor",
+    "date",
+    "difficulty",
+    "showenumerations",
+    "clueplacement",
 )
 
 
@@ -20,9 +44,14 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
     """Render an ipuz crossword puzzle as a formatted PDF.
 
     Reads a crossword puzzle in ipuz JSON format, draws the title, author,
-    and copyright line, then lays out the puzzle grid alongside the Across
-    and Down clue lists, wrapping clues into columns and spilling onto
-    additional pages as needed. Can optionally fill in the solution.
+    and copyright line, then lays out the puzzle grid alongside its clue
+    lists, wrapping clues into columns and spilling onto additional pages
+    as needed. Can optionally fill in the solution.
+
+    Blocks are recognised by the file's own block marker, and cells that
+    ipuz marks as omitted are left undrawn. Parts of the puzzle that the
+    PDF cannot show, such as cell styles, are reported in a warning, and
+    a puzzle that relies on bars between cells is refused.
 
     Args:
         ipuz_file (str): Path to the input .ipuz JSON file.
@@ -37,11 +66,25 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
         None
 
     Raises:
-        SystemExit: If `ipuz_file` cannot be found or cannot be parsed;
-            the program prints an error message and exits with status
-            code 1.
+        SystemExit: If `ipuz_file` cannot be found, cannot be parsed, or
+            uses a feature that cannot be drawn; the program prints an
+            error message and exits with status code 1.
     """
-    data = load_ipuz(ipuz_file, require=("puzzle",))
+    data = load_ipuz(
+        ipuz_file,
+        require=("puzzle",),
+        reject=(BARS, MULTI_VALUES) if show_solution else (BARS,),
+        warn={
+            STYLES: "not drawn",
+            ORIENTED_STYLES: "not drawn",
+            GIVENS: "not drawn",
+            ZONES: "not drawn",
+            FORMATTING: "shown as plain text",
+            CLUE_LINKS: "not shown",
+            CLUE_FIELDS: "not shown",
+        },
+        unused_fields=(UNPRINTED_FIELDS, "not shown"),
+    )
 
     directory = os.path.dirname(pdf_file)
     if directory:
@@ -50,16 +93,17 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
     c = canvas.Canvas(pdf_file, pagesize=letter)
     page_width, page_height = letter
 
-    title = data.get("title", "Crossword Puzzle")
-    author = data.get("author", "")
-    copyright_text = data.get("copyright", "")
+    title = "Crossword Puzzle"
+    if data.get("title") is not None:
+        title = plain_text(data["title"])
+    author = plain_text(data.get("author"))
+    copyright_text = plain_text(data.get("copyright"))
 
-    dims = data.get("dimensions", {"width": 15, "height": 15})
-    cols = dims["width"]
-    rows = dims["height"]
-    puzzle = data.get("puzzle", [])
-    solution = data.get("solution", [])
-    empty = data.get("empty", EMPTY)
+    cols = data["dimensions"]["width"]
+    rows = data["dimensions"]["height"]
+    puzzle = data["puzzle"]
+    solution = data.get("solution") or []
+    block, empty = markers(data)
 
     current_y = page_height - 40
 
@@ -98,15 +142,15 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
     c.setLineWidth(1)
     for r in range(rows):
         for col in range(cols):
-            if r < len(puzzle) and col < len(puzzle[r]):
-                cell_val = puzzle[r][col]
-            else:
-                cell_val = "#"
+            cell_val = puzzle[r][col]
+
+            if is_omitted(cell_val):
+                continue
 
             x = start_x_grid + col * cell_size
             y = start_y_grid + (rows - 1 - r) * cell_size
 
-            if cell_val == BLOCK:
+            if is_block(cell_val, block):
                 c.setFillColorRGB(0, 0, 0)
                 c.rect(x, y, cell_size, cell_size, fill=1)
             else:
@@ -114,14 +158,14 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
                 c.rect(x, y, cell_size, cell_size, fill=1)
                 c.setFillColorRGB(0, 0, 0)
 
-                label = cell_label(cell_val, empty)
+                label = cell_label(cell_val, empty, block)
                 if label:
                     font_size = max(5, int(cell_size / 4.5))
                     c.setFont("Helvetica", font_size)
                     c.drawString(x + 1.5, y + cell_size - font_size, label)
 
                 if show_solution and r < len(solution) and col < len(solution[r]):
-                    sol_char = cell_value(solution[r][col])
+                    sol_char = cell_value(solution[r][col], block, empty)
                     if sol_char:
                         letter_font_size = max(8, int(cell_size / 1.5))
                         c.setFont("Helvetica-Bold", letter_font_size)
@@ -136,22 +180,27 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
                         c.drawString(lx, ly, sol_char)
                         c.setFillColorRGB(0, 0, 0)
 
-    across_clues = data.get("clues", {}).get("Across", [])
-    down_clues = data.get("clues", {}).get("Down", [])
+    clue_groups = []
+    for key, clues in (data.get("clues") or {}).items():
+        direction, heading = split_direction(key)
+        clue_groups.append((direction, plain_text(heading), clues))
 
-    def draw_all_clues(across, down):
-        """Lay out and draw the Across and Down clue lists on the canvas.
+    lead = {"Across": 0, "Down": 1}
+    clue_groups.sort(key=lambda group: lead.get(group[0], 2))
+
+    def draw_all_clues(groups):
+        """Lay out and draw the puzzle's clue lists on the canvas.
 
         Arranges clues into a fixed set of columns whose positions depend
-        on the chosen grid orientation, drawing "Across" and "Down"
-        section headers followed by their respective clue lists. Delegates
-        to nested helpers to handle column/page wrapping and text drawing.
+        on the chosen grid orientation, drawing a section header for each
+        clue list followed by its clues. Delegates to nested helpers to
+        handle column/page wrapping and text drawing.
 
         Args:
-            across (list[dict]): Across clue entries, each expected to have
-                "number" and "clue" keys.
-            down (list[dict]): Down clue entries, each expected to have
-                "number" and "clue" keys.
+            groups (list[tuple]): ``(direction, heading, clues)`` for
+                each clue list, in the order to draw them, where
+                ``heading`` is the text to print above the list and
+                ``clues`` holds its clues in any ipuz clue format.
 
         Returns:
             None
@@ -240,23 +289,23 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
         def draw_clue_list(clues):
             """Draw a numbered, word-wrapped list of clues.
 
-            Each clue is prefixed with its number in bold, word-wrapped to
-            fit the column width, and drawn line by line, wrapping to a new
-            column or page as needed.
+            Each clue is prefixed with its number (or its label, if the
+            file gives one) in bold, word-wrapped to fit the column width,
+            and drawn line by line, wrapping to a new column or page as
+            needed. A clue with neither is drawn without a prefix.
 
             Args:
-                clues (list[dict]): Clue entries, each expected to have
-                    "number" and "clue" keys.
+                clues (list): Clue entries in any ipuz clue format.
 
             Returns:
                 None
             """
             nonlocal current_y_clue
             for clue in clues:
-                num = clue_number(clue) or ""
-                text = html.unescape(str(clue_text(clue)))
+                num = clue_heading(clue)
+                text = plain_text(clue_text(clue))
 
-                num_prefix = f"{num}. "
+                num_prefix = f"{num}. " if num else ""
                 wrapped_text = textwrap.wrap(
                     f"{num_prefix}{text}", width=max_width_chars
                 )
@@ -283,16 +332,19 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
 
                 current_y_clue -= clue_spacing
 
-        if across:
-            draw_header("Across")
-            draw_clue_list(across)
+        drawn_any = False
+        for direction, heading, clues in groups:
+            if not clues:
+                continue
 
-        if down:
-            current_y_clue -= 6
-            draw_header("Down")
-            draw_clue_list(down)
+            if drawn_any or direction == "Down":
+                current_y_clue -= 6
 
-    draw_all_clues(across_clues, down_clues)
+            draw_header(heading)
+            draw_clue_list(clues)
+            drawn_any = True
+
+    draw_all_clues(clue_groups)
 
     c.save()
     print(f"Successfully created {pdf_file}")

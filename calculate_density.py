@@ -1,16 +1,20 @@
 import sys
 
-from shared import BLOCK, load_ipuz, single_file_parser
+from shared import BLOCK, is_block, is_omitted, load_ipuz, markers, single_file_parser
 
 
-def calculate_black_square_percentage(puzzle):
+def calculate_black_square_percentage(puzzle, block=BLOCK):
     """Calculates the percentage of black squares in an ipuz puzzle grid.
 
     Iterates over every cell in the puzzle grid and computes what
-    fraction of cells are black squares (represented by "#").
+    fraction of cells are black squares. Cells that ipuz marks as
+    omitted (null) are not part of the grid and are left out of both
+    counts.
 
     Args:
         puzzle: A 2-D list representing the crossword grid.
+        block: The file's ``"block"`` marker, which represents a black
+            square. Defaults to the ipuz default of ``"#"``.
 
     Returns:
         A tuple ``(black_squares, total_squares, percentage)`` where
@@ -27,8 +31,10 @@ def calculate_black_square_percentage(puzzle):
 
     for row in puzzle:
         for cell in row:
+            if is_omitted(cell):
+                continue
             total_squares += 1
-            if cell == BLOCK:
+            if is_block(cell, block):
                 black_squares += 1
 
     if total_squares == 0:
@@ -48,8 +54,10 @@ if __name__ == "__main__":
 
     data = load_ipuz(args.ipuz_file, require=("puzzle",))
 
+    block, _ = markers(data)
+
     black_count, total_count, percent = calculate_black_square_percentage(
-        data["puzzle"]
+        data["puzzle"], block
     )
 
     print(f"Total squares: {total_count}")

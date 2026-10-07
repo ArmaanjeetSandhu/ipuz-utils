@@ -2,15 +2,29 @@ import argparse
 import sys
 
 from shared import (
+    BARS,
+    BLOCK,
+    EMPTY,
+    MULTI_VALUES,
     extract_entries,
     grid_dimensions,
     letter_at,
     load_ipuz,
     make_is_playable,
+    markers,
 )
 
+DEFAULT_MARKERS = (BLOCK, EMPTY)
 
-def compare_squares(puzzle_a, solution_a, puzzle_b, solution_b):
+
+def compare_squares(
+    puzzle_a,
+    solution_a,
+    puzzle_b,
+    solution_b,
+    markers_a=DEFAULT_MARKERS,
+    markers_b=DEFAULT_MARKERS,
+):
     """Counts how many white squares hold the same letter in two grids.
 
     Compares two crosswords that are alternate fills of one another
@@ -23,6 +37,8 @@ def compare_squares(puzzle_a, solution_a, puzzle_b, solution_b):
         solution_a: The solution grid of the first puzzle.
         puzzle_b: The crossword grid of the second puzzle.
         solution_b: The solution grid of the second puzzle.
+        markers_a: The ``(block, empty)`` markers of the first puzzle.
+        markers_b: The ``(block, empty)`` markers of the second puzzle.
 
     Returns:
         A tuple ``(matching, total_white, percentage)`` where ``matching``
@@ -47,8 +63,8 @@ def compare_squares(puzzle_a, solution_a, puzzle_b, solution_b):
         print("Alternate fills must share an identical layout.")
         sys.exit(1)
 
-    is_playable_a = make_is_playable(puzzle_a)
-    is_playable_b = make_is_playable(puzzle_b)
+    is_playable_a = make_is_playable(puzzle_a, markers_a[0])
+    is_playable_b = make_is_playable(puzzle_b, markers_b[0])
 
     layout_mismatches = [
         (r + 1, c + 1)
@@ -78,8 +94,8 @@ def compare_squares(puzzle_a, solution_a, puzzle_b, solution_b):
                 continue
 
             total_white += 1
-            letter_a = letter_at(solution_a, r, c)
-            letter_b = letter_at(solution_b, r, c)
+            letter_a = letter_at(solution_a, r, c, *markers_a)
+            letter_b = letter_at(solution_b, r, c, *markers_b)
 
             if letter_a == letter_b:
                 matching += 1
@@ -93,51 +109,62 @@ def compare_squares(puzzle_a, solution_a, puzzle_b, solution_b):
     return matching, total_white, percentage
 
 
-def entry_word(solution, cells):
+def entry_word(solution, cells, block=BLOCK, empty=EMPTY):
     """Reads the word an entry spells out in a solution grid.
 
     Args:
         solution: A 2-D list representing the solution grid.
         cells: The ordered list of ``(row, col)`` coordinates the entry
             occupies.
+        block: The ``"block"`` marker of the solution's file.
+        empty: The ``"empty"`` marker of the solution's file.
 
     Returns:
         The entry's letters joined into a single uppercase string.
     """
-    return "".join(letter_at(solution, r, c) for r, c in cells)
+    return "".join(letter_at(solution, r, c, block, empty) for r, c in cells)
 
 
-def compare_entries(puzzle, solution_a, solution_b):
+def compare_entries(
+    puzzle,
+    solution_a,
+    solution_b,
+    markers_a=DEFAULT_MARKERS,
+    markers_b=DEFAULT_MARKERS,
+):
     """Compares the fill of two grids entry by entry.
 
     Because the two puzzles share an identical layout, the entries of
     either one describe both, so numbering and cell coordinates are
-    taken from ``puzzle`` and the letters are read from each solution
-    in turn.
+    taken from ``puzzle``, the grid of the first puzzle, and the
+    letters are read from each solution in turn.
 
     Args:
-        puzzle: The crossword grid shared by both puzzles.
+        puzzle: The crossword grid of the first puzzle.
         solution_a: The solution grid of the first puzzle.
         solution_b: The solution grid of the second puzzle.
+        markers_a: The ``(block, empty)`` markers of the first puzzle.
+        markers_b: The ``(block, empty)`` markers of the second puzzle.
 
     Returns:
         A tuple ``(changed, total, unchanged)`` where ``changed`` is the
         number of entries spelling a different word in the two grids,
         ``total`` is the number of entries, and ``unchanged`` is a list
-        of ``(direction, number, word)`` tuples for the entries whose
-        word is common to both grids, in grid order.
+        of ``(direction, label, word)`` tuples for the entries whose
+        word is common to both grids, in grid order. ``label`` is the
+        number or other label the first puzzle gives the entry.
     """
-    entries = extract_entries(puzzle)
+    entries = extract_entries(puzzle, *markers_a)
 
     changed = 0
     unchanged = []
 
     for entry in entries:
-        word_a = entry_word(solution_a, entry["cells"])
-        word_b = entry_word(solution_b, entry["cells"])
+        word_a = entry_word(solution_a, entry["cells"], *markers_a)
+        word_b = entry_word(solution_b, entry["cells"], *markers_b)
 
         if word_a == word_b:
-            unchanged.append((entry["direction"], entry["number"], word_a))
+            unchanged.append((entry["direction"], entry["label"], word_a))
         else:
             changed += 1
 
@@ -160,11 +187,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     required = ("puzzle", "solution")
-    data_a = load_ipuz(args.ipuz_file_a, require=required)
-    data_b = load_ipuz(args.ipuz_file_b, require=required)
+    unsupported = (BARS, MULTI_VALUES)
+    data_a = load_ipuz(args.ipuz_file_a, require=required, reject=unsupported)
+    data_b = load_ipuz(args.ipuz_file_b, require=required, reject=unsupported)
+    markers_a = markers(data_a)
+    markers_b = markers(data_b)
 
     same_count, white_count, percent = compare_squares(
-        data_a["puzzle"], data_a["solution"], data_b["puzzle"], data_b["solution"]
+        data_a["puzzle"],
+        data_a["solution"],
+        data_b["puzzle"],
+        data_b["solution"],
+        markers_a,
+        markers_b,
     )
 
     print(f"Total white squares:  {white_count}")
@@ -176,7 +211,7 @@ if __name__ == "__main__":
         print("✗ The two grids are identical.")
 
     changed_count, total_entries, unchanged = compare_entries(
-        data_a["puzzle"], data_a["solution"], data_b["solution"]
+        data_a["puzzle"], data_a["solution"], data_b["solution"], markers_a, markers_b
     )
 
     print()
@@ -186,8 +221,8 @@ if __name__ == "__main__":
 
     if args.show_unchanged and unchanged:
         print("\nUnchanged entries:")
-        for direction, number, word in unchanged:
-            print(f"‣ {number}-{direction}: {word}")
+        for direction, label, word in unchanged:
+            print(f"‣ {label}-{direction}: {word}")
 
     if changed_count == total_entries:
         print("✓ Every entry is different! A fully disjoint alternate fill.")
