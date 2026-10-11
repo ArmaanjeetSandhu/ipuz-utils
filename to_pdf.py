@@ -1,8 +1,12 @@
 import argparse
 import os
+import sys
 import textwrap
 
 from reportlab.lib.pagesizes import letter
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFError, TTFont
 from reportlab.pdfgen import canvas
 
 from shared import (
@@ -39,8 +43,45 @@ UNPRINTED_FIELDS = (
     "clueplacement",
 )
 
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+PAPER_IMAGE = os.path.join(ASSETS_DIR, "background.jpg")
+PAPER_FONT = os.path.join(ASSETS_DIR, "font.ttf")
+PAPER_FONT_NAME = "PaperFont"
 
-def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution=False):
+
+def load_paper_assets(need_font):
+    """Load the background image and grid font used by the paper look.
+
+    Args:
+        need_font (bool): Whether the grid font is needed as well as the
+            background image. It is only used for the solution letters.
+
+    Returns:
+        ImageReader: The background image, ready to draw on each page.
+
+    Raises:
+        SystemExit: If an asset is missing or cannot be read; the program
+            prints an error message and exits with status code 1.
+    """
+    try:
+        background = ImageReader(PAPER_IMAGE)
+    except OSError:
+        print(f"Error: '{PAPER_IMAGE}' is missing or is not a usable image.")
+        sys.exit(1)
+
+    if need_font:
+        try:
+            pdfmetrics.registerFont(TTFont(PAPER_FONT_NAME, PAPER_FONT))
+        except TTFError:
+            print(f"Error: '{PAPER_FONT}' is missing or is not a usable TrueType font.")
+            sys.exit(1)
+
+    return background
+
+
+def create_crossword_pdf(
+    ipuz_file, pdf_file, orientation="right", show_solution=False, paper=False
+):
     """Render an ipuz crossword puzzle as a formatted PDF.
 
     Reads a crossword puzzle in ipuz JSON format, draws the title, author,
@@ -61,14 +102,20 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
             with clues to its right, or "right" (the default) to place
             the grid on the right side of the page with clues to its left.
         show_solution (bool, optional): Whether to fill the grid with the solution.
+        paper (bool, optional): Whether to give the PDF a paper look:
+            every page is backed by ``assets/background.jpg``, which shows
+            through the open cells of the grid, and the solution letters
+            are set in ``assets/font.ttf``. Both files are looked up next
+            to this script.
 
     Returns:
         None
 
     Raises:
         SystemExit: If `ipuz_file` cannot be found, cannot be parsed, or
-            uses a feature that cannot be drawn; the program prints an
-            error message and exits with status code 1.
+            uses a feature that cannot be drawn, or if a paper asset is
+            missing or unreadable; the program prints an error message
+            and exits with status code 1.
     """
     data = load_ipuz(
         ipuz_file,
@@ -90,8 +137,36 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
     if directory:
         os.makedirs(directory, exist_ok=True)
 
+    background = load_paper_assets(need_font=show_solution) if paper else None
+    letter_font = PAPER_FONT_NAME if paper else "Helvetica-Bold"
+    letter_color = (0.15, 0.15, 0.15) if paper else (0.3, 0.3, 0.3)
+
     c = canvas.Canvas(pdf_file, pagesize=letter)
     page_width, page_height = letter
+
+    def draw_background():
+        """Cover the current page with the paper image, if one is in use.
+
+        The image keeps its proportions: it is scaled until it covers the
+        whole page and centred, so any excess falls off the edges.
+
+        Returns:
+            None
+        """
+        if background is None:
+            return
+        image_width, image_height = background.getSize()
+        scale = max(page_width / image_width, page_height / image_height)
+        width, height = image_width * scale, image_height * scale
+        c.drawImage(
+            background,
+            (page_width - width) / 2,
+            (page_height - height) / 2,
+            width=width,
+            height=height,
+        )
+
+    draw_background()
 
     title = "Crossword Puzzle"
     if data.get("title") is not None:
@@ -155,28 +230,28 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
                 c.rect(x, y, cell_size, cell_size, fill=1)
             else:
                 c.setFillColorRGB(1, 1, 1)
-                c.rect(x, y, cell_size, cell_size, fill=1)
+                c.rect(x, y, cell_size, cell_size, fill=0 if paper else 1)
                 c.setFillColorRGB(0, 0, 0)
 
                 label = cell_label(cell_val, empty, block)
                 if label:
                     font_size = max(5, int(cell_size / 4.5))
-                    c.setFont("Helvetica", font_size)
+                    c.setFont("Helvetica-Bold", font_size)
                     c.drawString(x + 1.5, y + cell_size - font_size, label)
 
                 if show_solution and r < len(solution) and col < len(solution[r]):
                     sol_char = cell_value(solution[r][col], block, empty)
                     if sol_char:
                         letter_font_size = max(8, int(cell_size / 1.5))
-                        c.setFont("Helvetica-Bold", letter_font_size)
+                        c.setFont(letter_font, letter_font_size)
 
                         letter_width = c.stringWidth(
-                            sol_char, "Helvetica-Bold", letter_font_size
+                            sol_char, letter_font, letter_font_size
                         )
                         lx = x + (cell_size - letter_width) / 2
                         ly = y + (cell_size - letter_font_size) / 2
 
-                        c.setFillColorRGB(0.3, 0.3, 0.3)
+                        c.setFillColorRGB(*letter_color)
                         c.drawString(lx, ly, sol_char)
                         c.setFillColorRGB(0, 0, 0)
 
@@ -251,6 +326,7 @@ def create_crossword_pdf(ipuz_file, pdf_file, orientation="right", show_solution
                     current_y_clue = columns[col_idx]["y"]
                 else:
                     c.showPage()
+                    draw_background()
                     columns = [
                         {"x": 30, "y": page_height - 50},
                         {"x": 165, "y": page_height - 50},
@@ -373,6 +449,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Generate the PDF in solution mode (grid filled out).",
     )
+    parser.add_argument(
+        "--paper",
+        action="store_true",
+        help="Print in paper mode.",
+    )
 
     args = parser.parse_args()
 
@@ -382,4 +463,6 @@ if __name__ == "__main__":
         suffix = "_solution" if args.solution else ""
         out_file = f"{stem}{suffix}.pdf"
 
-    create_crossword_pdf(args.ipuz_file, out_file, args.orientation, args.solution)
+    create_crossword_pdf(
+        args.ipuz_file, out_file, args.orientation, args.solution, args.paper
+    )
