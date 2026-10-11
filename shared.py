@@ -30,6 +30,7 @@ STYLES = "styles"
 GIVENS = "givens"
 ZONES = "zones"
 MULTI_VALUES = "multi_values"
+SOLUTION_LABELS = "solution_labels"
 OTHER_DIRECTIONS = "other_directions"
 UNNUMBERED_CLUES = "unnumbered_clues"
 MULTI_ENTRY_CLUES = "multi_entry_clues"
@@ -47,6 +48,7 @@ _FEATURE_DESCRIPTIONS = {
     GIVENS: "prefilled cell values",
     ZONES: "zones",
     MULTI_VALUES: "solution cells holding several or direction-specific values",
+    SOLUTION_LABELS: "clue numbers repeated in solution cells",
     OTHER_DIRECTIONS: "clue lists other than Across and Down",
     UNNUMBERED_CLUES: "unnumbered clues",
     MULTI_ENTRY_CLUES: "clues shared by several entries",
@@ -71,6 +73,7 @@ _ORIENTED_STYLE_KEYS = {
 }
 _CLUE_LINK_KEYS = {"references", "continued", "location"}
 _PLAIN_CLUE_KEYS = {"number", "numbers", "cells", "label", "clue"}
+_SINGLE_VALUE_KEYS = {"value", "style", "cell"}
 
 _LINE_BREAK = re.compile(r"<br[ \r\n\t]*/?>", re.IGNORECASE)
 _FORMAT_TAG = re.compile(r"</?(?:b|i|s|u|em|strong|big|small|sup|sub)>", re.IGNORECASE)
@@ -512,6 +515,10 @@ def cell_value(cell, block=BLOCK, empty=EMPTY):
     value per direction cannot be reduced to one string; tools that read
     solutions refuse such files through ``load_ipuz``.
 
+    Crossword Compiler also repeats each square's clue number under a
+    ``"cell"`` key, which ipuz defines only for the puzzle grid. The key
+    holds no part of the answer, so it is ignored.
+
     Args:
         cell: A single cell drawn from an ipuz solution grid.
         block: The file's ``"block"`` marker.
@@ -783,7 +790,7 @@ def detect_features(data):
         if isinstance(value, list):
             return True
         if isinstance(value, dict):
-            return any(key not in ("value", "style") for key in value) or isinstance(
+            return any(key not in _SINGLE_VALUE_KEYS for key in value) or isinstance(
                 value.get("value"), list
             )
         return False
@@ -801,6 +808,8 @@ def detect_features(data):
         for cell in row:
             if isinstance(cell, dict):
                 note_style(cell.get("style"))
+                if "cell" in cell:
+                    add(SOLUTION_LABELS)
             if has_many_values(cell):
                 add(MULTI_VALUES)
 

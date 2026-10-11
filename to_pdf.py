@@ -233,12 +233,6 @@ def create_crossword_pdf(
                 c.rect(x, y, cell_size, cell_size, fill=0 if paper else 1)
                 c.setFillColorRGB(0, 0, 0)
 
-                label = cell_label(cell_val, empty, block)
-                if label:
-                    font_size = max(5, int(cell_size / 4.5))
-                    c.setFont("Helvetica-Bold", font_size)
-                    c.drawString(x + 1.5, y + cell_size - font_size, label)
-
                 if show_solution and r < len(solution) and col < len(solution[r]):
                     sol_char = cell_value(solution[r][col], block, empty)
                     if sol_char:
@@ -254,6 +248,12 @@ def create_crossword_pdf(
                         c.setFillColorRGB(*letter_color)
                         c.drawString(lx, ly, sol_char)
                         c.setFillColorRGB(0, 0, 0)
+
+                label = cell_label(cell_val, empty, block)
+                if label:
+                    font_size = max(5, int(cell_size / 4.5))
+                    c.setFont("Helvetica-Bold", font_size)
+                    c.drawString(x + 1.5, y + cell_size - font_size, label)
 
     clue_groups = []
     for key, clues in (data.get("clues") or {}).items():

@@ -13,6 +13,7 @@ from shared import (
     MULTI_ENTRY_CLUES,
     ORIENTED_STYLES,
     OTHER_DIRECTIONS,
+    SOLUTION_LABELS,
     UNNUMBERED_CLUES,
     clue_group,
     clue_number,
@@ -82,12 +83,16 @@ def transpose_value(value):
     direction, as in ``{"Across": "Q", "Down": "Z"}``. Transposing the
     grid turns Across into Down, so those keys must swap with it.
 
+    A clue number repeated under a ``"cell"`` key, as Crossword Compiler
+    writes it, is dropped: ipuz defines that key only for the puzzle
+    grid, and the number no longer holds once the grid is renumbered.
+
     Args:
         value: A single cell drawn from an ipuz solution grid.
 
     Returns:
         The cell with every direction replaced by the direction it
-        becomes in the transposed grid.
+        becomes in the transposed grid, and without any ``"cell"`` key.
     """
     if isinstance(value, list):
         return [transpose_value(item) for item in value]
@@ -98,6 +103,7 @@ def transpose_value(value):
                 item if key == "style" else transpose_value(item)
             )
             for key, item in value.items()
+            if key != "cell"
         }
 
     return value
@@ -459,6 +465,7 @@ def to_transpose(ipuz_file, out_file, sort_references=False):
             CUSTOM_LABELS: "replaced by standard numbering",
             CLUE_LABELS: "removed, since the entries are renumbered",
             CLUE_LINKS: "removed, since the entries are renumbered",
+            SOLUTION_LABELS: "removed, since the entries are renumbered",
             ORIENTED_STYLES: "kept as they are, so they may need adjusting",
         },
     )
