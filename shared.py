@@ -280,7 +280,7 @@ def load_ipuz(ipuz_file, require=(), reject=(), warn=None, unused_fields=None):
             uses a feature listed in ``reject``.
     """
     try:
-        with open(ipuz_file, "r", encoding="utf-8") as f:
+        with open(ipuz_file, encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
         print(f"Error: Could not find the file '{ipuz_file}'")

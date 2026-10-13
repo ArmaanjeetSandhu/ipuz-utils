@@ -286,7 +286,7 @@ def rewrite_references(text, mapping, sort_references=False):
         separator, direction = match.group(3), match.group(4)
         canonical = "Across" if direction.lower() == "across" else "Down"
 
-        numbers = re.findall(r"\d+", leading) + [final]
+        numbers = [*re.findall(r"\d+", leading), final]
         targets = [mapping.get((canonical, n)) for n in numbers]
 
         if any(t is None for t in targets):

@@ -1,11 +1,13 @@
 import argparse
+import math
 import os
+import random
+import struct
 import sys
 import textwrap
 
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase import pdfdoc, pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFError, TTFont
 from reportlab.pdfgen import canvas
 
@@ -44,39 +46,283 @@ UNPRINTED_FIELDS = (
 )
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-PAPER_IMAGE = os.path.join(ASSETS_DIR, "background.jpg")
 PAPER_FONT = os.path.join(ASSETS_DIR, "font.ttf")
 PAPER_FONT_NAME = "PaperFont"
 
+PAPER_TONE = (0.903, 0.899, 0.91)
 
-def load_paper_assets(need_font):
-    """Load the background image and grid font used by the paper look.
+PAPER_BUMPS = {
+    "density": 0.1,
+    "radius": (0.6, 1.9),
+    "sides": 6,
+    "relief": 0.35,
+    "dark": (0.05, 0.09),
+    "light": (0.25, 0.4),
+}
+PAPER_FINE_FLECKS = {
+    "density": 2.0,
+    "radius": (0.12, 0.42),
+    "dark": (0.05, 0.09, 0.14),
+    "light": (0.35, 0.6, 0.85),
+}
+PAPER_FLECKS = {
+    "density": 0.6,
+    "radius": (0.25, 0.7),
+    "dark": (0.03, 0.06),
+    "light": (0.25, 0.45),
+}
 
-    Args:
-        need_font (bool): Whether the grid font is needed as well as the
-            background image. It is only used for the solution letters.
+PAPER_GRAIN = (
+    {"tile": 29, "angle": 17, "specks": (PAPER_BUMPS,)},
+    {"tile": 37, "angle": -29, "specks": (PAPER_BUMPS,)},
+    {"tile": 31, "angle": 61, "specks": (PAPER_FINE_FLECKS, PAPER_FLECKS)},
+)
+
+PAPER_MOTTLES = 70
+PAPER_MOTTLE_RADIUS = (25, 90)
+PAPER_MOTTLE_STRENGTH = (0.08, 0.11)
+PAPER_MESH_STEP = 12
+
+PAPER_SEED = 7
+PAPER_GRAIN_FORM = "PaperGrain"
+SPECK_UNITS = 100
+
+
+def load_paper_font():
+    """Register the font used for solution letters in the paper look.
 
     Returns:
-        ImageReader: The background image, ready to draw on each page.
+        None
 
     Raises:
-        SystemExit: If an asset is missing or cannot be read; the program
-            prints an error message and exits with status code 1.
+        SystemExit: If the font is missing or cannot be read; the program prints an
+            error message and exits with status code 1.
     """
     try:
-        background = ImageReader(PAPER_IMAGE)
-    except OSError:
-        print(f"Error: '{PAPER_IMAGE}' is missing or is not a usable image.")
+        pdfmetrics.registerFont(TTFont(PAPER_FONT_NAME, PAPER_FONT))
+    except TTFError:
+        print(f"Error: '{PAPER_FONT}' is missing or is not a usable TrueType font.")
         sys.exit(1)
 
-    if need_font:
-        try:
-            pdfmetrics.registerFont(TTFont(PAPER_FONT_NAME, PAPER_FONT))
-        except TTFError:
-            print(f"Error: '{PAPER_FONT}' is missing or is not a usable TrueType font.")
-            sys.exit(1)
 
-    return background
+def paper_shade(toward, strength):
+    """Blend the paper tone toward black or white.
+
+    Args:
+        toward (float): 0.0 to darken toward black, 1.0 to lighten toward white.
+        strength (float): How far to blend, from 0.0 (paper) to 1.0 (`toward`).
+
+    Returns:
+        tuple[float, float, float]: The blended RGB colour.
+    """
+    return tuple(t + (toward - t) * strength for t in PAPER_TONE)
+
+
+def make_grain_pattern(rng, tile, angle, specks):
+    """Build one grain pattern as a PDF tiling pattern.
+
+    The specks are generated into one tile, which the viewer repeats across whatever
+    area the pattern fills. A speck that crosses an edge of the tile is also drawn on
+    the opposite edge, so the tile joins its neighbours without a seam. Specks of the
+    same colour are gathered into one path, so the whole tile is only a handful of fill
+    operations.
+
+    Args:
+        rng (random.Random): Source of randomness for speck placement.
+        tile, angle, specks: The pattern's settings; see ``PAPER_GRAIN``.
+
+    Returns:
+        PDFStream: The pattern, ready to add to a document.
+    """
+    content = [f"{1 / SPECK_UNITS} 0 0 {1 / SPECK_UNITS} 0 0 cm"]
+
+    def add_speck(path, x, y, corners, reach):
+        for dx in (-tile, 0, tile):
+            for dy in (-tile, 0, tile):
+                cx, cy = x + dx, y + dy
+                if -reach <= cx <= tile + reach and -reach <= cy <= tile + reach:
+                    points = [
+                        (round((cx + px) * SPECK_UNITS), round((cy + py) * SPECK_UNITS))
+                        for px, py in corners
+                    ]
+                    path.append(
+                        f"{points[0][0]} {points[0][1]} m "
+                        + " ".join(f"{px} {py} l" for px, py in points[1:])
+                        + " h"
+                    )
+
+    for kind in specks:
+        dark, light = kind["dark"], kind["light"]
+        sides, relief = kind.get("sides", 4), kind.get("relief", 0)
+        colors = [paper_shade(0.0, s) for s in dark]
+        colors += [paper_shade(1.0, s) for s in light]
+        paths = [[] for _ in colors]
+
+        step = 2 * math.pi / sides
+        for _ in range(int(kind["density"] * tile * tile)):
+            r = rng.uniform(*kind["radius"])
+            x, y = rng.uniform(0, tile), rng.uniform(0, tile)
+            start = rng.uniform(0, 2 * math.pi)
+            corners = []
+            for i in range(sides):
+                a = start + step * (i + rng.uniform(-0.3, 0.3))
+                d = r * rng.uniform(0.6, 1.0)
+                corners.append((d * math.cos(a), d * math.sin(a)))
+
+            if relief:
+                shift = relief * r
+                shadow = paths[rng.randrange(len(dark))]
+                highlight = paths[len(dark) + rng.randrange(len(light))]
+                add_speck(shadow, x + shift, y - shift, corners, r + shift)
+                add_speck(highlight, x - shift, y + shift, corners, r + shift)
+            else:
+                add_speck(paths[rng.randrange(len(colors))], x, y, corners, r)
+
+        for color, path in zip(colors, paths, strict=False):
+            if path:
+                content.append("{:.4f} {:.4f} {:.4f} rg".format(*color))
+                content.extend(path)
+                content.append("f")
+
+    cos = round(math.cos(math.radians(angle)), 6)
+    sin = round(math.sin(math.radians(angle)), 6)
+    return pdfdoc.PDFStream(
+        dictionary=pdfdoc.PDFDictionary(
+            {
+                "Type": pdfdoc.PDFName("Pattern"),
+                "PatternType": 1,
+                "PaintType": 1,
+                "TilingType": 1,
+                "BBox": pdfdoc.PDFArray([0, 0, tile, tile]),
+                "XStep": tile,
+                "YStep": tile,
+                "Matrix": pdfdoc.PDFArray([cos, sin, -sin, cos, 0, 0]),
+                "Resources": pdfdoc.PDFDictionary({}),
+            }
+        ),
+        content="\n".join(content),
+        filters=[pdfdoc.PDFZCompress],
+    )
+
+
+def make_mottled_tone(rng, page_width, page_height):
+    """Build the paper tone and its mottling as one smooth mesh gradient.
+
+    Scatters soft patches over the page, adds up how much they darken or lighten each
+    corner of a fine grid, and gives the viewer the colour at every corner. The viewer
+    shades smoothly between corners, so there are no edges to see at any zoom, and the
+    whole page is one operation.
+
+    The shading object is written by hand: a lattice-form Gouraud-shaded triangle mesh
+    (shading type 5), with each corner packed as 16-bit coordinates and colours.
+
+    Args:
+        rng (random.Random): Source of randomness for the patches.
+        page_width (float): Width of the page in points.
+        page_height (float): Height of the page in points.
+
+    Returns:
+        PDFStream: The shading, ready to paint with ``canvas.shade``.
+    """
+    patches = []
+    for _ in range(PAPER_MOTTLES):
+        r = rng.uniform(*PAPER_MOTTLE_RADIUS)
+        x = rng.uniform(-r / 2, page_width + r / 2)
+        y = rng.uniform(-r / 2, page_height + r / 2)
+        darken = rng.random() < 0.5
+        strength = PAPER_MOTTLE_STRENGTH[0 if darken else 1] * rng.uniform(0.3, 1.0)
+        patches.append((x, y, r, -strength if darken else strength))
+
+    cols = math.ceil(page_width / PAPER_MESH_STEP) + 1
+    rows = math.ceil(page_height / PAPER_MESH_STEP) + 1
+    top = 0xFFFF
+    data = bytearray()
+    for j in range(rows):
+        y = page_height * j / (rows - 1)
+        for i in range(cols):
+            x = page_width * i / (cols - 1)
+            shift = 0.0
+            for px, py, r, strength in patches:
+                d2 = ((x - px) ** 2 + (y - py) ** 2) / (r * r)
+                if d2 < 1:
+                    shift += strength * (1 - d2) ** 2
+            color = paper_shade(0.0 if shift < 0 else 1.0, min(abs(shift), 1.0))
+            data += struct.pack(
+                ">5H",
+                round(top * i / (cols - 1)),
+                round(top * j / (rows - 1)),
+                *(round(top * channel) for channel in color),
+            )
+
+    return pdfdoc.PDFStream(
+        dictionary=pdfdoc.PDFDictionary(
+            {
+                "ShadingType": 5,
+                "ColorSpace": pdfdoc.PDFName("DeviceRGB"),
+                "BitsPerCoordinate": 16,
+                "BitsPerComponent": 16,
+                "VerticesPerRow": cols,
+                "Decode": pdfdoc.PDFArray(
+                    [0, page_width, 0, page_height, 0, 1, 0, 1, 0, 1]
+                ),
+            }
+        ),
+        content=bytes(data),
+        filters=[pdfdoc.PDFZCompress],
+    )
+
+
+def define_paper(c, page_width, page_height):
+    """Prepare the paper grain once for the whole document.
+
+    Defines the grain patterns, and a form that fills the page with each of them in
+    turn, so every page can draw the grain with a single reference to that form.
+
+    Args:
+        c (canvas.Canvas): The canvas to prepare.
+        page_width (float): Width of the page in points.
+        page_height (float): Height of the page in points.
+
+    Returns:
+        random.Random: Source of randomness for the per-page mottling, seeded so that
+            the same puzzle always gives the same PDF.
+    """
+    rng = random.Random(PAPER_SEED)
+    patterns = {}
+    for i, settings in enumerate(PAPER_GRAIN):
+        pattern = make_grain_pattern(rng, **settings)
+        patterns[f"Grain{i}"] = c._doc.Reference(pattern, f"PaperGrainPattern{i}")
+
+    c.beginForm(PAPER_GRAIN_FORM, 0, 0, page_width, page_height)
+    for name in patterns:
+        c.addLiteral(f"/Pattern cs /{name} scn 0 0 {page_width} {page_height} re f")
+    c.endForm()
+
+    form = c._doc.idToObject[c._doc.getXObjectName(PAPER_GRAIN_FORM)]
+    form.Resources = pdfdoc.PDFResourceDictionary(Pattern=patterns)
+    return rng
+
+
+def draw_paper(c, page_width, page_height, rng):
+    """Cover the current page with the paper look.
+
+    Paints the paper tone with a different mottling on each page, then the grain
+    prepared by ``define_paper``.
+
+    Args:
+        c (canvas.Canvas): The canvas to draw on, already prepared with
+            ``define_paper``.
+        page_width (float): Width of the page in points.
+        page_height (float): Height of the page in points.
+        rng (random.Random): Source of randomness for the mottling.
+
+    Returns:
+        None
+    """
+    c.saveState()
+    c.shade(make_mottled_tone(rng, page_width, page_height))
+    c.doForm(PAPER_GRAIN_FORM)
+    c.restoreState()
 
 
 def create_crossword_pdf(
@@ -84,38 +330,36 @@ def create_crossword_pdf(
 ):
     """Render an ipuz crossword puzzle as a formatted PDF.
 
-    Reads a crossword puzzle in ipuz JSON format, draws the title, author,
-    and copyright line, then lays out the puzzle grid alongside its clue
-    lists, wrapping clues into columns and spilling onto additional pages
-    as needed. Can optionally fill in the solution.
+    Reads a crossword puzzle in ipuz JSON format, draws the title, author, and copyright
+    line, then lays out the puzzle grid alongside its clue lists, wrapping clues into
+    columns and spilling onto additional pages as needed. Can optionally fill in the
+    solution.
 
-    Blocks are recognised by the file's own block marker, and cells that
-    ipuz marks as omitted are left undrawn. Parts of the puzzle that the
-    PDF cannot show, such as cell styles, are reported in a warning, and
-    a puzzle that relies on bars between cells is refused.
+    Blocks are recognised by the file's own block marker, and cells that ipuz marks as
+    omitted are left undrawn. Parts of the puzzle that the PDF cannot show, such as cell
+    styles, are reported in a warning, and a puzzle that relies on bars between cells is
+    refused.
 
     Args:
         ipuz_file (str): Path to the input .ipuz JSON file.
         pdf_file (str): Path where the generated PDF will be saved.
-        orientation (str, optional): Layout orientation for the grid.
-            Use "left" to place the grid on the left side of the page
-            with clues to its right, or "right" (the default) to place
-            the grid on the right side of the page with clues to its left.
+        orientation (str, optional): Layout orientation for the grid. Use "left" to
+            place the grid on the left side of the page with clues to its right, or
+            "right" (the default) to place the grid on the right side of the page with
+            clues to its left.
         show_solution (bool, optional): Whether to fill the grid with the solution.
-        paper (bool, optional): Whether to give the PDF a paper look:
-            every page is backed by ``assets/background.jpg``, which shows
-            through the open cells of the grid, and the solution letters
-            are set in ``assets/font.ttf``. Both files are looked up next
-            to this script.
+        paper (bool, optional): Whether to give the PDF a paper look: every page is
+            backed by a textured paper, drawn in vector graphics, which shows through
+            the open cells of the grid. The solution letters are set in
+            ``assets/font.ttf``, which is looked up next to this script.
 
     Returns:
         None
 
     Raises:
-        SystemExit: If `ipuz_file` cannot be found, cannot be parsed, or
-            uses a feature that cannot be drawn, or if a paper asset is
-            missing or unreadable; the program prints an error message
-            and exits with status code 1.
+        SystemExit: If `ipuz_file` cannot be found, cannot be parsed, or uses a feature
+            that cannot be drawn, or if the paper font is needed but missing or
+            unreadable; the program prints an error message and exits with status code 1
     """
     data = load_ipuz(
         ipuz_file,
@@ -137,34 +381,23 @@ def create_crossword_pdf(
     if directory:
         os.makedirs(directory, exist_ok=True)
 
-    background = load_paper_assets(need_font=show_solution) if paper else None
+    if paper and show_solution:
+        load_paper_font()
     letter_font = PAPER_FONT_NAME if paper else "Helvetica-Bold"
     letter_color = (0.15, 0.15, 0.15) if paper else (0.3, 0.3, 0.3)
 
     c = canvas.Canvas(pdf_file, pagesize=letter)
     page_width, page_height = letter
+    paper_rng = define_paper(c, page_width, page_height) if paper else None
 
     def draw_background():
-        """Cover the current page with the paper image, if one is in use.
-
-        The image keeps its proportions: it is scaled until it covers the
-        whole page and centred, so any excess falls off the edges.
+        """Cover the current page with the paper look, if it is in use.
 
         Returns:
             None
         """
-        if background is None:
-            return
-        image_width, image_height = background.getSize()
-        scale = max(page_width / image_width, page_height / image_height)
-        width, height = image_width * scale, image_height * scale
-        c.drawImage(
-            background,
-            (page_width - width) / 2,
-            (page_height - height) / 2,
-            width=width,
-            height=height,
-        )
+        if paper:
+            draw_paper(c, page_width, page_height, paper_rng)
 
     draw_background()
 
@@ -207,10 +440,7 @@ def create_crossword_pdf(
 
     right_area_x = page_width - 30 - grid_width_points
 
-    if orientation == "left":
-        start_x_grid = 30
-    else:
-        start_x_grid = right_area_x
+    start_x_grid = 30 if orientation == "left" else right_area_x
 
     start_y_grid = content_start_y - grid_height_points
 
@@ -266,16 +496,15 @@ def create_crossword_pdf(
     def draw_all_clues(groups):
         """Lay out and draw the puzzle's clue lists on the canvas.
 
-        Arranges clues into a fixed set of columns whose positions depend
-        on the chosen grid orientation, drawing a section header for each
-        clue list followed by its clues. Delegates to nested helpers to
-        handle column/page wrapping and text drawing.
+        Arranges clues into a fixed set of columns whose positions depend on the chosen
+        grid orientation, drawing a section header for each clue list followed by its
+        clues. Delegates to nested helpers to handle column/page wrapping and text
+        drawing.
 
         Args:
-            groups (list[tuple]): ``(direction, heading, clues)`` for
-                each clue list, in the order to draw them, where
-                ``heading`` is the text to print above the list and
-                ``clues`` holds its clues in any ipuz clue format.
+            groups (list[tuple]): ``(direction, heading, clues)`` for each clue list, in
+                the order to draw them, where ``heading`` is the text to print above the
+                list and ``clues`` holds its clues in any ipuz clue format.
 
         Returns:
             None
@@ -306,14 +535,14 @@ def create_crossword_pdf(
         def check_page_wrap(needed_space=0):
             """Advance to the next clue column or a new page if space is short.
 
-            Checks whether the remaining vertical space in the current
-            column can fit `needed_space` points of content. If not,
-            advances to the next predefined column; if no columns remain,
-            starts a new PDF page with a fresh set of four columns.
+            Checks whether the remaining vertical space in the current column can fit
+            `needed_space` points of content. If not, advances to the next predefined
+            column; if no columns remain, starts a new PDF page with a fresh set of four
+            columns.
 
             Args:
-                needed_space (int, optional): Vertical space in points
-                    required for the upcoming content. Defaults to 0.
+                needed_space (int, optional): Vertical space in points required for the
+                    upcoming content. Defaults to 0.
 
             Returns:
                 None
@@ -365,10 +594,10 @@ def create_crossword_pdf(
         def draw_clue_list(clues):
             """Draw a numbered, word-wrapped list of clues.
 
-            Each clue is prefixed with its number (or its label, if the
-            file gives one) in bold, word-wrapped to fit the column width,
-            and drawn line by line, wrapping to a new column or page as
-            needed. A clue with neither is drawn without a prefix.
+            Each clue is prefixed with its number (or its label, if the file gives one)
+            in bold, word-wrapped to fit the column width, and drawn line by line,
+            wrapping to a new column or page as needed. A clue with neither is drawn
+            without a prefix.
 
             Args:
                 clues (list): Clue entries in any ipuz clue format.
