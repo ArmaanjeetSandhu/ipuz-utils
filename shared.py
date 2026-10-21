@@ -27,6 +27,7 @@ DIRECTIONS = (
 BARS = "bars"
 ORIENTED_STYLES = "oriented_styles"
 STYLES = "styles"
+CIRCLES = "circles"
 GIVENS = "givens"
 ZONES = "zones"
 MULTI_VALUES = "multi_values"
@@ -45,6 +46,7 @@ _FEATURE_DESCRIPTIONS = {
     BARS: "bars between cells",
     ORIENTED_STYLES: "cell styles that depend on the grid's orientation",
     STYLES: "cell styles",
+    CIRCLES: "circled squares",
     GIVENS: "prefilled cell values",
     ZONES: "zones",
     MULTI_VALUES: "solution cells holding several or direction-specific values",
@@ -74,6 +76,7 @@ _ORIENTED_STYLE_KEYS = {
 _CLUE_LINK_KEYS = {"references", "continued", "location"}
 _PLAIN_CLUE_KEYS = {"number", "numbers", "cells", "label", "clue"}
 _SINGLE_VALUE_KEYS = {"value", "style", "cell"}
+_CIRCLE_SHAPE = "circle"
 
 _LINE_BREAK = re.compile(r"<br[ \r\n\t]*/?>", re.IGNORECASE)
 _FORMAT_TAG = re.compile(r"</?(?:b|i|s|u|em|strong|big|small|sup|sub)>", re.IGNORECASE)
@@ -375,6 +378,71 @@ def is_block(cell, block=BLOCK):
     if isinstance(cell, dict):
         cell = cell.get("cell")
     return isinstance(cell, str) and cell == block
+
+
+def named_styles(data):
+    """Reads the named cell styles an ipuz file defines.
+
+    Args:
+        data: The parsed ipuz data.
+
+    Returns:
+        The file's ``"styles"`` mapping, or an empty mapping if it has
+        none.
+    """
+    styles = data.get("styles")
+    return styles if isinstance(styles, dict) else {}
+
+
+def cell_style(cell, styles=None):
+    """Reads the style a puzzle grid cell carries.
+
+    A cell's ``"style"`` is either a mapping of style properties or the
+    name of one of the file's named styles.
+
+    Args:
+        cell: A single cell drawn from an ipuz grid.
+        styles: The file's named styles, as returned by
+            :func:`named_styles`.
+
+    Returns:
+        The cell's style as a mapping, which is empty if the cell has no
+        style or names one the file does not define.
+    """
+    if not isinstance(cell, dict):
+        return {}
+    style = cell.get("style")
+    if isinstance(style, str):
+        style = (styles or {}).get(style)
+    return style if isinstance(style, dict) else {}
+
+
+def is_circle(shape):
+    """Determines whether a ``"shapebg"`` style value asks for a circle.
+
+    Args:
+        shape: The value of a style's ``"shapebg"`` property.
+
+    Returns:
+        True if the value is the string ``"circle"``, ignoring case and
+        surrounding whitespace; False otherwise.
+    """
+    return isinstance(shape, str) and shape.strip().lower() == _CIRCLE_SHAPE
+
+
+def is_circled(cell, styles=None):
+    """Determines whether a puzzle grid cell is a circled square.
+
+    Args:
+        cell: A single cell drawn from an ipuz puzzle grid.
+        styles: The file's named styles, as returned by
+            :func:`named_styles`.
+
+    Returns:
+        True if the cell's style draws a circle behind it; False
+        otherwise.
+    """
+    return is_circle(cell_style(cell, styles).get("shapebg"))
 
 
 def grid_dimensions(grid):
@@ -753,6 +821,10 @@ def describe_feature(feature, details=()):
 def detect_features(data):
     """Finds the optional ipuz crossword features a puzzle makes use of.
 
+    Circled squares are recognised in the puzzle grid, where ipuz
+    defines cell styles. A circle style in the solution grid is reported
+    as an ordinary cell style.
+
     Args:
         data: The parsed ipuz data, already checked by ``load_ipuz``.
 
@@ -769,17 +841,19 @@ def detect_features(data):
             details.add(str(detail))
 
     block, empty = markers(data)
-    named_styles = data.get("styles") if isinstance(data.get("styles"), dict) else {}
+    styles = named_styles(data)
 
-    def note_style(style):
+    def note_style(style, circles=False):
         if isinstance(style, str):
-            style = named_styles.get(style)
+            style = styles.get(style)
         if not isinstance(style, dict):
             return
         for key, value in style.items():
             if value is None or value == "" or value is False:
                 continue
-            if key in _BAR_STYLE_KEYS:
+            if circles and key == "shapebg" and is_circle(value):
+                add(CIRCLES)
+            elif key in _BAR_STYLE_KEYS:
                 add(BARS, key)
             elif key in _ORIENTED_STYLE_KEYS:
                 add(ORIENTED_STYLES, key)
@@ -800,7 +874,7 @@ def detect_features(data):
     for row in puzzle:
         for cell in row:
             if isinstance(cell, dict):
-                note_style(cell.get("style"))
+                note_style(cell.get("style"), circles=True)
                 if cell.get("value") not in (None, ""):
                     add(GIVENS)
 

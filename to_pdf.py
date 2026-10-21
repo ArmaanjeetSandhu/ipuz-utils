@@ -26,9 +26,11 @@ from shared import (
     clue_heading,
     clue_text,
     is_block,
+    is_circled,
     is_omitted,
     load_ipuz,
     markers,
+    named_styles,
     plain_text,
     split_direction,
 )
@@ -86,6 +88,82 @@ PAPER_MESH_STEP = 12
 PAPER_SEED = 7
 PAPER_GRAIN_FORM = "PaperGrain"
 SPECK_UNITS = 100
+
+GRID_LINE_WIDTH = 1
+
+NUMBER_FONT = "Helvetica-Bold"
+NUMBER_INSET = 1.5
+
+CIRCLE_WIDTH = 0.035
+CIRCLE_MIN_WIDTH = 0.5
+CIRCLE_CLEARANCE = 0.035
+
+
+def number_font_size(cell_size):
+    """Work out the size of the clue number printed in a cell.
+
+    Args:
+        cell_size (float): Side of a grid cell in points.
+
+    Returns:
+        int: The font size in points.
+    """
+    return max(5, int(cell_size / 4.5))
+
+
+def draw_circle(c, x, y, cell_size, label=None):
+    """Draw the circle of a circled square.
+
+    The circle is the largest that fits inside the cell's border. Where the cell's
+    clue number would overlap it, the arc behind the number is left out, so the number
+    sits clear of the circle with the rest of the circle unbroken.
+
+    The number occupies a box in the top left corner of the cell. Where the corner of
+    that box nearest the centre lies on or outside the circle, the circle never meets
+    the box and is drawn whole. Otherwise the circle crosses the box's right edge near
+    the top of the cell and its bottom edge near the left, and the arc between those
+    two points is the part that is left out.
+
+    Args:
+        c (canvas.Canvas): The canvas to draw on.
+        x (float): X coordinate of the cell's lower left corner.
+        y (float): Y coordinate of the cell's lower left corner.
+        cell_size (float): Side of the cell in points.
+        label (str, optional): The clue number printed in the cell, if any.
+
+    Returns:
+        None
+    """
+    width = max(CIRCLE_MIN_WIDTH, cell_size * CIRCLE_WIDTH)
+    radius = (cell_size - GRID_LINE_WIDTH - width) / 2
+    cx = x + cell_size / 2
+    cy = y + cell_size / 2
+
+    arc = None
+    if label:
+        font_size = number_font_size(cell_size)
+        clearance = CIRCLE_CLEARANCE * cell_size + width / 2
+        right = (
+            NUMBER_INSET
+            + c.stringWidth(label, NUMBER_FONT, font_size)
+            + clearance
+            - cell_size / 2
+        )
+        bottom = font_size + clearance - cell_size / 2
+        if right * right + bottom * bottom < radius * radius:
+            start = 2 * math.pi - math.acos(right / radius)
+            end = 3 * math.pi - math.asin(bottom / radius)
+            arc = (-math.degrees(end), math.degrees(end - start))
+
+    c.saveState()
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(width)
+    c.setLineCap(1)
+    if arc:
+        c.arc(cx - radius, cy - radius, cx + radius, cy + radius, *arc)
+    else:
+        c.circle(cx, cy, radius, stroke=1, fill=0)
+    c.restoreState()
 
 
 def load_paper_font():
@@ -336,9 +414,10 @@ def create_crossword_pdf(
     solution.
 
     Blocks are recognised by the file's own block marker, and cells that ipuz marks as
-    omitted are left undrawn. Parts of the puzzle that the PDF cannot show, such as cell
-    styles, are reported in a warning, and a puzzle that relies on bars between cells is
-    refused.
+    omitted are left undrawn. Circled squares are drawn with a circle inscribed in the
+    square, which omits the arc behind the square's clue number. Parts of the puzzle
+    that the PDF cannot show, such as other cell styles, are reported in a warning, and
+    a puzzle that relies on bars between cells is refused.
 
     Args:
         ipuz_file (str): Path to the input .ipuz JSON file.
@@ -412,6 +491,7 @@ def create_crossword_pdf(
     puzzle = data["puzzle"]
     solution = data.get("solution") or []
     block, empty = markers(data)
+    styles = named_styles(data)
 
     current_y = page_height - 40
 
@@ -444,7 +524,7 @@ def create_crossword_pdf(
 
     start_y_grid = content_start_y - grid_height_points
 
-    c.setLineWidth(1)
+    c.setLineWidth(GRID_LINE_WIDTH)
     for r in range(rows):
         for col in range(cols):
             cell_val = puzzle[r][col]
@@ -463,6 +543,10 @@ def create_crossword_pdf(
                 c.rect(x, y, cell_size, cell_size, fill=0 if paper else 1)
                 c.setFillColorRGB(0, 0, 0)
 
+                label = cell_label(cell_val, empty, block)
+                if is_circled(cell_val, styles):
+                    draw_circle(c, x, y, cell_size, label)
+
                 if show_solution and r < len(solution) and col < len(solution[r]):
                     sol_char = cell_value(solution[r][col], block, empty)
                     if sol_char:
@@ -479,11 +563,10 @@ def create_crossword_pdf(
                         c.drawString(lx, ly, sol_char)
                         c.setFillColorRGB(0, 0, 0)
 
-                label = cell_label(cell_val, empty, block)
                 if label:
-                    font_size = max(5, int(cell_size / 4.5))
-                    c.setFont("Helvetica-Bold", font_size)
-                    c.drawString(x + 1.5, y + cell_size - font_size, label)
+                    font_size = number_font_size(cell_size)
+                    c.setFont(NUMBER_FONT, font_size)
+                    c.drawString(x + NUMBER_INSET, y + cell_size - font_size, label)
 
     clue_groups = []
     for key, clues in (data.get("clues") or {}).items():
