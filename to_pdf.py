@@ -7,31 +7,39 @@ import sys
 import textwrap
 
 from reportlab.lib.pagesizes import letter
+from reportlab.lib.utils import simpleSplit
 from reportlab.pdfbase import pdfdoc, pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFError, TTFont
 from reportlab.pdfgen import canvas
 
 from shared import (
     BARS,
+    CLUE_CELLS,
     CLUE_FIELDS,
-    CLUE_LINKS,
     FORMATTING,
     GIVENS,
+    MULTI_ENTRY_CLUES,
     MULTI_VALUES,
     ORIENTED_STYLES,
+    OTHER_DIRECTIONS,
     STYLES,
+    UNNUMBERED_CLUES,
     ZONES,
     cell_label,
     cell_value,
     clue_heading,
+    clue_number,
     clue_text,
+    extract_entries,
     is_block,
     is_circled,
     is_omitted,
+    letter_at,
     load_ipuz,
     markers,
     named_styles,
     plain_text,
+    print_warning,
     split_direction,
 )
 
@@ -97,6 +105,19 @@ NUMBER_INSET = 1.5
 CIRCLE_WIDTH = 0.035
 CIRCLE_MIN_WIDTH = 0.5
 CIRCLE_CLEARANCE = 0.035
+
+SUBMISSION_MARGIN = 30
+SUBMISSION_AUTHOR_FONT = ("Times-Bold", 12)
+SUBMISSION_AUTHOR_LEADING = 14.5
+SUBMISSION_GRID_WIDTH = 432
+SUBMISSION_GRID_MAX_HEIGHT = 540
+SUBMISSION_TOP = 60
+SUBMISSION_BOTTOM = 60
+SUBMISSION_FONT_SIZE = 10
+SUBMISSION_LINE_HEIGHT = 12.5
+SUBMISSION_ENTRY_SPACING = 3
+SUBMISSION_COLUMN_GAP = 18
+SUBMISSION_MAX_ANSWER_SHARE = 0.4
 
 
 def number_font_size(cell_size):
@@ -403,8 +424,175 @@ def draw_paper(c, page_width, page_height, rng):
     c.restoreState()
 
 
+def solution_answers(puzzle, solution, block, empty):
+    """Read the answer to every entry of a puzzle from its solution grid.
+
+    Args:
+        puzzle (list): The ``"puzzle"`` grid, which decides where entries start.
+        solution (list): The ``"solution"`` grid, which holds the letters.
+        block: The file's ``"block"`` marker.
+        empty: The file's ``"empty"`` marker.
+
+    Returns:
+        dict[tuple[str, str], str]: The answer to each entry, uppercase, keyed by
+            ``(direction, number)``. An entry is also keyed by the label its first
+            cell carries, if that differs from the number, so that clues numbered by
+            either can find it.
+    """
+    answers = {}
+    for entry in extract_entries(puzzle, block, empty):
+        word = "".join(
+            letter_at(solution, r, col, block, empty) for r, col in entry["cells"]
+        )
+        answers[(entry["direction"], str(entry["number"]))] = word
+        answers.setdefault((entry["direction"], entry["label"]), word)
+    return answers
+
+
+def read_details(details_file):
+    """Read an author's details from a text file.
+
+    Args:
+        details_file (str): Path to a UTF-8 text file holding the details, one line
+            of the details per line of the file.
+
+    Returns:
+        list[str]: The lines of the details, without trailing whitespace and without
+            blank lines.
+
+    Raises:
+        SystemExit: If the file cannot be found or read as UTF-8 text; the program
+            prints an error message and exits with status code 1.
+    """
+    try:
+        with open(details_file, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        print(f"Error: Could not find the file '{details_file}'")
+        sys.exit(1)
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"Error: Could not read '{details_file}' as text ({exc}).")
+        sys.exit(1)
+    return [line.rstrip() for line in lines if line.strip()]
+
+
+def draw_submission_pages(
+    c, groups, answers, left, right, page_height, draw_background
+):
+    """Draw the clue and solution pages that follow a submission's grid page.
+
+    Every clue is set in a left column, left-aligned, with its solution opposite it
+    in a right column, right-aligned. The clue column starts at ``left`` and the
+    solution column ends at ``right``, so that both line up with the edges of the
+    grid on the first page. Clue lists are drawn in the order given, each under its
+    own heading, and continue onto further pages as needed. Clue numbers hang to the
+    left of the clue text, so that a clue that runs over several lines stays aligned.
+
+    Args:
+        c (canvas.Canvas): The canvas to draw on, whose first page is already done.
+        groups (list[tuple]): ``(direction, heading, clues)`` for each clue list, in
+            the order to draw them.
+        answers (dict): The answers, as returned by :func:`solution_answers`.
+        left (float): The x coordinate of the left edge of the clue column.
+        right (float): The x coordinate of the right edge of the solution column.
+        page_height (float): Height of the page in points.
+        draw_background (callable): Called after each new page is started.
+
+    Returns:
+        None
+    """
+    font, bold, size = "Times-Roman", "Times-Bold", SUBMISSION_FONT_SIZE
+    line_height = SUBMISSION_LINE_HEIGHT
+    top = page_height - SUBMISSION_TOP
+
+    rows = []
+    for direction, heading, clues in groups:
+        entries = []
+        for clue in clues:
+            number = clue_number(clue)
+            answer = answers.get((direction, number), "")
+            if not answer:
+                print_warning(
+                    f"no solution found for the {direction} clue '{number}'; "
+                    "its solution is left blank."
+                )
+            entries.append((clue_heading(clue), plain_text(clue_text(clue)), answer))
+        if entries:
+            rows.append((heading, entries))
+
+    total_width = right - left
+    answer_width = min(
+        max(
+            (
+                c.stringWidth(a, font, size)
+                for _, entries in rows
+                for _, _, a in entries
+            ),
+            default=0,
+        ),
+        total_width * SUBMISSION_MAX_ANSWER_SHARE,
+    )
+    number_width = (
+        max(
+            (
+                c.stringWidth(f"{num}.", bold, size)
+                for _, entries in rows
+                for num, _, _ in entries
+            ),
+            default=0,
+        )
+        + 4
+    )
+    text_width = total_width - answer_width - SUBMISSION_COLUMN_GAP - number_width
+
+    c.showPage()
+    draw_background()
+    y = top
+
+    def make_room(needed):
+        nonlocal y
+        if y - needed < SUBMISSION_BOTTOM:
+            c.showPage()
+            draw_background()
+            y = top
+
+    for index, (heading, entries) in enumerate(rows):
+        if index:
+            y -= 8
+        first_lines = simpleSplit(entries[0][1], font, size, text_width) or [""]
+        make_room(line_height * 2 + len(first_lines) * line_height)
+
+        c.setFont(bold, 12)
+        c.drawString(left, y, heading)
+        heading_width = c.stringWidth(heading, bold, 12)
+        c.setLineWidth(0.5)
+        c.line(left, y - 1.5, left + heading_width, y - 1.5)
+        y -= line_height + 3
+
+        for num, text, answer in entries:
+            lines = simpleSplit(text, font, size, text_width) or [""]
+            make_room(len(lines) * line_height)
+
+            if num:
+                c.setFont(bold, size)
+                c.drawString(left, y, f"{num}.")
+            c.setFont(font, size)
+            for i, line in enumerate(lines):
+                c.drawString(left + number_width, y, line)
+                if i == 0:
+                    c.drawRightString(right, y, answer)
+                y -= line_height
+            y -= SUBMISSION_ENTRY_SPACING
+
+
 def create_crossword_pdf(
-    ipuz_file, pdf_file, orientation="right", show_solution=False, paper=False
+    ipuz_file,
+    pdf_file,
+    orientation="right",
+    show_solution=False,
+    paper=False,
+    submission=False,
+    details_file=None,
 ):
     """Render an ipuz crossword puzzle as a formatted PDF.
 
@@ -431,6 +619,17 @@ def create_crossword_pdf(
             backed by a textured paper, drawn in vector graphics, which shows through
             the open cells of the grid. The solution letters are set in
             ``assets/font.ttf``, which is looked up next to this script.
+        submission (bool, optional): Whether to lay the PDF out for submitting the
+            puzzle. The first page carries only the author's name, in its top-left
+            corner, and the solved grid, centred on the page. The pages after it list
+            every Across clue and then every Down clue, each clue left-aligned in a
+            left column with its solution right-aligned in a right column. The two
+            columns span the width of the grid. This mode always fills in the
+            solution, ignores `orientation`, and needs the file to hold a solution
+            and its clues. The author's name is set in bold.
+        details_file (str, optional): Path to a text file holding the author's
+            details, used only in submission mode. Its lines are set directly below
+            the author's name, in the same bold font. Blank lines are skipped.
 
     Returns:
         None
@@ -438,19 +637,36 @@ def create_crossword_pdf(
     Raises:
         SystemExit: If `ipuz_file` cannot be found, cannot be parsed, or uses a feature
             that cannot be drawn, or if the paper font is needed but missing or
-            unreadable; the program prints an error message and exits with status code 1
+            unreadable, or if `details_file` cannot be read; the program prints an error
+            message and exits with status code 1
     """
+    details = read_details(details_file) if submission and details_file else []
+
+    if submission:
+        show_solution = True
+        require = ("puzzle", "solution", "clues")
+        reject = (
+            BARS,
+            MULTI_VALUES,
+            OTHER_DIRECTIONS,
+            UNNUMBERED_CLUES,
+            MULTI_ENTRY_CLUES,
+            CLUE_CELLS,
+        )
+    else:
+        require = ("puzzle",)
+        reject = (BARS, MULTI_VALUES) if show_solution else (BARS,)
+
     data = load_ipuz(
         ipuz_file,
-        require=("puzzle",),
-        reject=(BARS, MULTI_VALUES) if show_solution else (BARS,),
+        require=require,
+        reject=reject,
         warn={
             STYLES: "not drawn",
             ORIENTED_STYLES: "not drawn",
             GIVENS: "not drawn",
             ZONES: "not drawn",
             FORMATTING: "shown as plain text",
-            CLUE_LINKS: "not shown",
             CLUE_FIELDS: "not shown",
         },
         unused_fields=(UNPRINTED_FIELDS, "not shown"),
@@ -493,36 +709,50 @@ def create_crossword_pdf(
     block, empty = markers(data)
     styles = named_styles(data)
 
-    current_y = page_height - 40
+    if submission:
+        cell_size = min(SUBMISSION_GRID_WIDTH / cols, SUBMISSION_GRID_MAX_HEIGHT / rows)
+        grid_width_points = cell_size * cols
+        grid_height_points = cell_size * rows
 
-    c.setFont("Times-Bold", 16)
-    c.drawString(30, current_y, title)
-    current_y -= 16
+        start_x_grid = (page_width - grid_width_points) / 2
+        start_y_grid = (page_height - grid_height_points) / 2
 
-    c.setFont("Times-Roman", 10)
-    c.drawString(30, current_y, author)
-    current_y -= 12
+        c.setFont(*SUBMISSION_AUTHOR_FONT)
+        author_y = page_height - SUBMISSION_MARGIN - SUBMISSION_AUTHOR_FONT[1]
+        for line in ([author] if author else []) + details:
+            c.drawString(SUBMISSION_MARGIN, author_y, line)
+            author_y -= SUBMISSION_AUTHOR_LEADING
+    else:
+        current_y = page_height - 40
 
-    if copyright_text:
-        c.setFont("Times-Italic", 8)
-        c.drawString(30, current_y, copyright_text)
+        c.setFont("Times-Bold", 16)
+        c.drawString(30, current_y, title)
+        current_y -= 16
+
+        c.setFont("Times-Roman", 10)
+        c.drawString(30, current_y, author)
         current_y -= 12
 
-    current_y -= 2
-    c.setLineWidth(1)
-    c.line(30, current_y, page_width - 30, current_y)
+        if copyright_text:
+            c.setFont("Times-Italic", 8)
+            c.drawString(30, current_y, copyright_text)
+            current_y -= 12
 
-    content_start_y = current_y - 20
+        current_y -= 2
+        c.setLineWidth(1)
+        c.line(30, current_y, page_width - 30, current_y)
 
-    grid_width_points = 270
-    cell_size = grid_width_points / cols
-    grid_height_points = cell_size * rows
+        content_start_y = current_y - 20
 
-    right_area_x = page_width - 30 - grid_width_points
+        grid_width_points = 270
+        cell_size = grid_width_points / cols
+        grid_height_points = cell_size * rows
 
-    start_x_grid = 30 if orientation == "left" else right_area_x
+        right_area_x = page_width - 30 - grid_width_points
 
-    start_y_grid = content_start_y - grid_height_points
+        start_x_grid = 30 if orientation == "left" else right_area_x
+
+        start_y_grid = content_start_y - grid_height_points
 
     c.setLineWidth(GRID_LINE_WIDTH)
     for r in range(rows):
@@ -575,6 +805,20 @@ def create_crossword_pdf(
 
     lead = {"Across": 0, "Down": 1}
     clue_groups.sort(key=lambda group: lead.get(group[0], 2))
+
+    if submission:
+        draw_submission_pages(
+            c,
+            clue_groups,
+            solution_answers(puzzle, solution, block, empty),
+            start_x_grid,
+            start_x_grid + grid_width_points,
+            page_height,
+            draw_background,
+        )
+        c.save()
+        print(f"Successfully created {pdf_file}")
+        return
 
     def draw_all_clues(groups):
         """Lay out and draw the puzzle's clue lists on the canvas.
@@ -746,7 +990,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--out",
         default=None,
-        help="Path where the generated PDF will be saved (default: <name>.pdf, or <name>_solution.pdf in solution mode).",
+        help="Path where the generated PDF will be saved (default: <name>.pdf, <name>_solution.pdf in solution mode, or <name>_submission.pdf in submission mode).",
     )
     parser.add_argument(
         "orientation",
@@ -766,15 +1010,45 @@ if __name__ == "__main__":
         action="store_true",
         help="Print in paper mode.",
     )
+    parser.add_argument(
+        "--submission",
+        action="store_true",
+        help=(
+            "Generate the PDF in submission mode: the author's name and the solved "
+            "grid on the first page, followed by the Across and then the Down clues "
+            "with their solutions. Cannot be combined with --solution."
+        ),
+    )
+    parser.add_argument(
+        "--details",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Path to a text file holding the author's details, to be printed below "
+            "the author's name in submission mode. Requires --submission."
+        ),
+    )
 
     args = parser.parse_args()
+    if args.submission and args.solution:
+        parser.error("--submission cannot be combined with --solution.")
+    if args.details and not args.submission:
+        parser.error("--details requires --submission.")
 
     out_file = args.out
     if out_file is None:
         stem = os.path.splitext(os.path.basename(args.ipuz_file))[0]
-        suffix = "_solution" if args.solution else ""
+        suffix = (
+            "_submission" if args.submission else "_solution" if args.solution else ""
+        )
         out_file = f"{stem}{suffix}.pdf"
 
     create_crossword_pdf(
-        args.ipuz_file, out_file, args.orientation, args.solution, args.paper
+        args.ipuz_file,
+        out_file,
+        args.orientation,
+        args.solution,
+        args.paper,
+        args.submission,
+        args.details,
     )
